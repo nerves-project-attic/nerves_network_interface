@@ -81,45 +81,41 @@ defmodule NetBasic do
   Return link-level information on the specified interface.
   """
   def ifinfo(pid, ifname) do
-    GenServer.call(pid, {:ifinfo, to_erlstring(ifname)})
+    GenServer.call(pid, {:ifinfo, ifname})
   end
 
   @doc """
   Bring the specified interface up.
   """
   def ifup(pid, ifname) do
-    GenServer.call(pid, {:ifup, to_erlstring(ifname)})
+    GenServer.call(pid, {:ifup, ifname})
   end
 
   @doc """
   Bring the specified interface down.
   """
   def ifdown(pid, ifname) do
-    GenServer.call(pid, {:ifdown, to_erlstring(ifname)})
+    GenServer.call(pid, {:ifdown, ifname})
   end
 
   @doc """
   Return IP settings for the specified interface.
   """
-  def ip(pid, ifname) do
-    GenServer.call(pid, {:ip, to_erlstring(ifname)})
+  def get(pid, ifname) do
+    GenServer.call(pid, {:get, ifname})
   end
 
   @doc """
-  TODO FIXME
   Set IP settings for the specified interface. The following options are
   available:
 
-    * `:address` - the IPv4 address of the interface
-    * `:subnet` - the IPv4 subnet mask
-    * `:gateway` - the default gateway 
+    * `:ipv4_address` - the IPv4 address of the interface
+    * `:ipv4_broadcast` - the IPv4 broadcast address for the interface
+    * `:ipv4_subnet_mask` - the IPv4 subnet mask
+    * `:ipv4_gateway` - the default gateway 
   """
-  def set_ip(pid, ifname, address, broadcast, mask) do
-    GenServer.call(pid, {:set_ip, ifname, address, broadcast, mask})
-  end
-
-  def set_default_gateway(pid, ifname, gateway) do
-    GenServer.call(pid, {:set_default_gateway, ifname, gateway})
+  def set(pid, ifname, options) do
+    GenServer.call(pid, {:set, ifname, options})
   end
 
   def init(event_manager) do
@@ -145,16 +141,12 @@ defmodule NetBasic do
     {:ok, response} = call_port(state, :ifdown, ifname)
     {:reply, response, state }
   end
-  def handle_call({:ip, ifname}, _from, state) do
-    {:ok, response} = call_port(state, :ip, ifname)
+  def handle_call({:set, ifname, options}, _from, state) do
+    {:ok, response} = call_port(state, :set, {ifname, options})
     {:reply, response, state }
   end
-  def handle_call({:ip, ifname, options}, _from, state) do
-    {:ok, response} = call_port(state, :ip, {ifname, options})
-    {:reply, response, state }
-  end
-  def handle_call({:set_default_gateway, ifname, gateway}, _from, state) do
-    {:ok, response} = call_port(state, :ip, {ifname, gateway})
+  def handle_call({:get, ifname}, _from, state) do
+    {:ok, response} = call_port(state, :get, ifname)
     {:reply, response, state }
   end
 
@@ -181,7 +173,4 @@ defmodule NetBasic do
         _ -> :error
     end
   end
-
-  defp to_erlstring(str) when is_list(str), do: str
-  defp to_erlstring(str) when is_binary(str), do: String.to_char_list(str)
 end

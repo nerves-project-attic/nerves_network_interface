@@ -50,9 +50,16 @@ struct net_basic {
     // Netlink buffering
     char nlbuf[8192]; // See MNL_SOCKET_BUFFER_SIZE
 
-    // Erlang buffering
+    // Erlang request processing
+    const char *req;
+    int req_index;
+
+    // Erlang response processing
     char resp[ERLCMD_BUF_SIZE];
     int resp_index;
+
+    // Holder of the most recently encounted error message if there is one.
+    const char *last_error;
 };
 
 static void net_basic_init(struct net_basic *nb)
@@ -143,24 +150,6 @@ static void encode_stats(struct net_basic *nb, const char *key, struct nlattr *a
     encode_ulong(nb, "tx_dropped", stats->tx_dropped);
     encode_ulong(nb, "multicast", stats->multicast);
     encode_ulong(nb, "collisions", stats->collisions);
-}
-
-static void encode_ip(struct net_basic *nb, const char *key, struct nlattr *attr)
-{
-    char buffer[INET6_ADDRSTRLEN];
-    int len = mnl_attr_get_payload_len(attr);
-
-    switch (len) {
-        case sizeof(struct in_addr):
-           inet_ntop(AF_INET, mnl_attr_get_payload(attr), buffer, sizeof(buffer));
-           break;
-        case sizeof(struct in6_addr):
-           inet_ntop(AF_INET6, mnl_attr_get_payload(attr), buffer, sizeof(buffer));
-           break;
-        default:
-           errx(EXIT_FAILURE, "Bad size %d to encode_ip", len);
-    }
-    encode_string(nb, key, buffer);
 }
 
 static int net_basic_build_ifinfo(const struct nlmsghdr *nlh, void *data)
@@ -307,7 +296,7 @@ static void net_basic_set_ifflags(struct net_basic *nb,
             return;
         }
     }
-    ei_encode_atom(nb->resp, &nb->resp_index, "ok");
+    erlcmd_encode_ok(nb->resp, &nb->resp_index);
 }
 
 static int collect_route_attrs(const struct nlattr *attr, void *data)
@@ -319,63 +308,36 @@ static int collect_route_attrs(const struct nlattr *attr, void *data)
     if (mnl_attr_type_valid(attr, RTA_MAX) < 0)
         return MNL_CB_OK;
 
-    // Only save supported attributes (see encode logic)
-    switch (type) {
-    case RTA_DST:
-    case RTA_SRC:
-    case RTA_GATEWAY:
-        tb[type] = attr;
-        break;
-
-    default:
-        break;
-    }
+    tb[type] = attr;
     return MNL_CB_OK;
 }
 
-static int net_basic_build_ipinfo(const struct nlmsghdr *nlh, void *data)
+struct fdg_data {
+    int oif;
+    char *result;
+};
+
+static int check_default_gateway(const struct nlmsghdr *nlh, void *data)
 {
     struct nlattr *tb[RTA_MAX + 1] = {};
     struct rtmsg *rm = mnl_nlmsg_get_payload(nlh);
-    struct net_basic *nb = (struct net_basic *) data;
     mnl_attr_parse(nlh, sizeof(*rm), collect_route_attrs, tb);
 
-    int count = 4;
-    int i;
-    for (i = 0; i < RTA_MAX; i++)
-        if (tb[i])
-            count++;
-
-    ei_encode_map_header(nb->resp, &nb->resp_index, count);
-
-    ei_encode_atom(nb->resp, &nb->resp_index, "family");
-    switch (rm->rtm_family) {
-        case AF_INET:
-            ei_encode_atom(nb->resp, &nb->resp_index, "inet");
-            break;
-        case AF_INET6:
-            ei_encode_atom(nb->resp, &nb->resp_index, "inet6");
-            break;
-        default:
-            ei_encode_atom(nb->resp, &nb->resp_index, "other");
-            break;
+    struct fdg_data *fdg = (struct fdg_data *) data;
+    if (rm->rtm_scope == 0 &&
+            tb[RTA_OIF] &&
+            (int) mnl_attr_get_u32(tb[RTA_OIF]) == fdg->oif &&
+            tb[RTA_GATEWAY]) {
+        // Found it.
+        inet_ntop(AF_INET, mnl_attr_get_payload(tb[RTA_GATEWAY]), fdg->result, INET_ADDRSTRLEN);
     }
-
-    encode_long(nb, "dst_len", rm->rtm_dst_len);
-    encode_long(nb, "src_len", rm->rtm_src_len);
-    encode_long(nb, "tos", rm->rtm_tos);
-    if (tb[RTA_DST])
-        encode_ip(nb, "dst", tb[RTA_DST]);
-    if (tb[RTA_SRC])
-        encode_ip(nb, "src", tb[RTA_SRC]);
-    if (tb[RTA_GATEWAY])
-        encode_ip(nb, "gateway", tb[RTA_GATEWAY]);
 
     return MNL_CB_OK;
 }
 
-static void net_basic_handle_ip(struct net_basic *nb,
-                                const char *ifname)
+static void find_default_gateway(struct net_basic *nb,
+                                int oif,
+                                char *result)
 {
     struct nlmsghdr *nlh;
     struct rtmsg *rtm;
@@ -383,37 +345,121 @@ static void net_basic_handle_ip(struct net_basic *nb,
 
     nlh = mnl_nlmsg_put_header(nb->nlbuf);
     nlh->nlmsg_type = RTM_GETROUTE;
-    nlh->nlmsg_flags = NLM_F_REQUEST;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
     nlh->nlmsg_seq = seq = nb->seq++;
 
     rtm = mnl_nlmsg_put_extra_header(nlh, sizeof(struct rtmsg));
     rtm->rtm_family = AF_INET;
-
-    mnl_attr_put_str(nlh, IFLA_IFNAME, ifname);
 
     if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0)
         err(EXIT_FAILURE, "mnl_socket_send");
 
     unsigned int portid = mnl_socket_get_portid(nb->nl);
 
-    int original_resp_index = nb->resp_index;
-    ssize_t ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
-    if (ret < 0)
-        err(EXIT_FAILURE, "mnl_socket_recvfrom");
+    struct fdg_data fdg;
+    fdg.oif = oif;
+    fdg.result = result;
+    *fdg.result = '\0';
 
-    if (mnl_cb_run(nb->nlbuf, ret, seq, portid, net_basic_build_ipinfo, nb) < 0) {
-        debug("error from mnl_cb_run?");
-        nb->resp_index = original_resp_index;
-        ei_encode_atom(nb->resp, &nb->resp_index, "error");
+    ssize_t ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
+    while (ret > 0) {
+        ret = mnl_cb_run(nb->nlbuf, ret, seq, portid, check_default_gateway, &fdg);
+        if (ret <= MNL_CB_STOP)
+            break;
+        ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
     }
+    if (ret == -1)
+        err(EXIT_FAILURE, "mnl_socket_recvfrom");
 }
 
-static void remove_default_gateway(struct net_basic *nb, const char *ifname)
+struct ip_setting_handler {
+    const char *name;
+    int (*set)(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname);
+    int (*get)(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname);
+
+    // data for handlers
+    int ioctl_set;
+    int ioctl_get;
+};
+
+static int set_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname);
+static int get_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname);
+static int set_default_gateway(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname);
+static int get_default_gateway(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname);
+
+static struct ip_setting_handler handlers[] = {
+    { "ipv4_address", set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFADDR, SIOCGIFADDR },
+    { "ipv4_broadcast", set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFBRDADDR, SIOCGIFBRDADDR },
+    { "ipv4_subnet_mask", set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFNETMASK, SIOCGIFNETMASK },
+    { "ipv4_gateway", set_default_gateway, get_default_gateway, 0, 0 },
+    { NULL, NULL, NULL, 0, 0 }
+};
+
+#define HANDLER_COUNT ((sizeof(handlers) / sizeof(handlers[0])) - 1)
+
+static int set_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname)
+{
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+    char ipaddr[INET_ADDRSTRLEN];
+    if (erlcmd_decode_string(nb->req, &nb->req_index, ipaddr, INET_ADDRSTRLEN) < 0)
+        errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
+
+    struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
+    addr->sin_family = AF_INET;
+    if (inet_pton(AF_INET, ipaddr, &addr->sin_addr) <= 0) {
+        debug("Bad IP address for '%s': %s", handler->name, ipaddr);
+        nb->last_error = "bad_ip_address";
+        return -1;
+    }
+
+    if (ioctl(nb->inet_fd, handler->ioctl_set, &ifr) < 0) {
+        debug("ioctl(0x%04x) failed for setting '%s': %s", handler->ioctl_set, handler->name, strerror(errno));
+        nb->last_error = strerror(errno); // Think about this
+        return -1;
+    }
+
+    return 0;
+}
+
+static int get_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname)
+{
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+    if (ioctl(nb->inet_fd, handler->ioctl_get, &ifr) < 0) {
+        debug("ioctl(0x%04x) failed for getting '%s': %s", handler->ioctl_get, handler->name, strerror(errno));
+        nb->last_error = strerror(errno); // Think about this
+        return -1;
+    }
+
+    struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
+    if (addr->sin_family == AF_INET) {
+        char addrstr[INET_ADDRSTRLEN];
+        if (!inet_ntop(addr->sin_family, &addr->sin_addr, addrstr, sizeof(addrstr))) {
+            debug("inet_ntop failed for '%s'? : %s", handler->name, strerror(errno));
+            nb->last_error = strerror(errno); // Think about this
+            return -1;
+        }
+        ei_encode_atom(nb->resp, &nb->resp_index, handler->name);
+        ei_encode_string(nb->resp, &nb->resp_index, addrstr);
+    } else {
+        debug("got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
+        nb->last_error = "bad family";
+        return -1;
+    }
+    return 0;
+}
+
+static int remove_all_gateways(struct net_basic *nb, const char *ifname)
 {
     struct rtentry route;
     memset(&route, 0, sizeof(route));
 
-    struct sockaddr_in *addr = (struct sockaddr_in *)&route.rt_gateway;
+    struct sockaddr_in *addr = (struct sockaddr_in *) &route.rt_gateway;
     addr->sin_family = AF_INET;
     addr->sin_addr.s_addr = INADDR_ANY;
 
@@ -434,15 +480,17 @@ static void remove_default_gateway(struct net_basic *nb, const char *ifname)
     for (;;) {
         int rc = ioctl(nb->inet_fd, SIOCDELRT, &route);
         if (rc < 0) {
-            if (errno == ESRCH)
-                break;
-            else
-                err(EXIT_FAILURE, "SIOCDELRT");
+            if (errno == ESRCH) {
+                return 0;
+            } else {
+                nb->last_error = strerror(errno);
+                return -1;
+            }
         }
     }
 }
 
-static void add_default_gateway(struct net_basic *nb, const char *ifname, const char *gateway_ip)
+static int add_default_gateway(struct net_basic *nb, const char *ifname, const char *gateway_ip)
 {
     struct rtentry route;
     memset(&route, 0, sizeof(route));
@@ -450,8 +498,11 @@ static void add_default_gateway(struct net_basic *nb, const char *ifname, const 
     struct sockaddr_in *addr = (struct sockaddr_in *)&route.rt_gateway;
     memset(addr, 0, sizeof(struct sockaddr_in));
     addr->sin_family = AF_INET;
-    if (inet_pton(AF_INET, gateway_ip, &addr->sin_addr) <= 0)
-        errx(EXIT_FAILURE, "Bad IP address: %s", gateway_ip);
+    if (inet_pton(AF_INET, gateway_ip, &addr->sin_addr) <= 0) {
+        debug("Bad IP address for the default gateway: %s", gateway_ip);
+        nb->last_error = "bad_ip_address";
+        return -1;
+    }
 
     addr = (struct sockaddr_in*) &route.rt_dst;
     memset(addr, 0, sizeof(struct sockaddr_in));
@@ -468,18 +519,112 @@ static void add_default_gateway(struct net_basic *nb, const char *ifname, const 
     route.rt_metric = 0;
 
     int rc = ioctl(nb->inet_fd, SIOCADDRT, &route);
-    if (rc < 0 && errno != EEXIST)
-        err(EXIT_FAILURE, "SIOCADDRT");
+    if (rc < 0 && errno != EEXIST) {
+        nb->last_error = strerror(errno);
+        return -1;
+    }
+    return 0;
 }
 
-static void net_basic_handle_set_default_gateway(struct net_basic *nb,
-        const char *ifname,
-        const char *gateway)
+
+
+static int set_default_gateway(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname)
 {
-    // Remove any previously set default gateways
-    remove_default_gateway(nb, ifname);
-    add_default_gateway(nb, ifname, gateway);
-    ei_encode_atom(nb->resp, &nb->resp_index, "ok");
+    char gateway[INET_ADDRSTRLEN];
+    if (erlcmd_decode_string(nb->req, &nb->req_index, gateway, INET_ADDRSTRLEN) < 0)
+        errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
+
+    // Before one can be set, any configured gateways need to be removed.
+    if (remove_all_gateways(nb, ifname) < 0)
+        return -1;
+
+    return add_default_gateway(nb, ifname, gateway);
+}
+
+static int ifname_to_index(struct net_basic *nb, const char *ifname)
+{
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+    if (ioctl(nb->inet_fd, SIOCGIFINDEX, &ifr) < 0) {
+        nb->last_error = strerror(errno);
+        return -1;
+    }
+    return ifr.ifr_ifindex;
+}
+
+static int get_default_gateway(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname)
+{
+    int oif = ifname_to_index(nb, ifname);
+    if (oif < 0)
+        return -1;
+
+    char gateway_ip[INET_ADDRSTRLEN];
+    find_default_gateway(nb, oif, gateway_ip);
+
+    // If the gateway isn't found, then the empty string is what we want.
+    ei_encode_atom(nb->resp, &nb->resp_index, handler->name);
+    ei_encode_string(nb->resp, &nb->resp_index, gateway_ip);
+    return 0;
+}
+
+static void net_basic_handle_get(struct net_basic *nb,
+                                 const char *ifname)
+{
+    int original_resp_index = nb->resp_index;
+
+    ei_encode_map_header(nb->resp, &nb->resp_index, HANDLER_COUNT);
+
+    nb->last_error = NULL;
+    struct ip_setting_handler *handler = handlers;
+    while (handler->name &&
+           handler->get(handler, nb, ifname) >= 0)
+        handler++;
+
+    if (nb->last_error) {
+        nb->resp_index = original_resp_index;
+        erlcmd_encode_error_tuple(nb->resp, &nb->resp_index, nb->last_error);
+    }
+}
+
+static struct ip_setting_handler *find_handler(const char *name)
+{
+    struct ip_setting_handler *handler = handlers;
+    while (handler->name) {
+        if (strcmp(handler->name, name) == 0)
+            return handler;
+        handler++;
+    }
+    return NULL;
+}
+
+static void net_basic_handle_set(struct net_basic *nb,
+                                 const char *ifname)
+{
+    nb->last_error = NULL;
+
+    int arity;
+    if (ei_decode_map_header(nb->req, &nb->req_index, &arity) < 0)
+        errx(EXIT_FAILURE, "setting attributes requires a map");
+
+    int i;
+    for (i = 0; i < arity && nb->last_error == NULL; i++) {
+        char name[32];
+        if (erlcmd_decode_atom(nb->req, &nb->req_index, name, sizeof(name)) < 0)
+            errx(EXIT_FAILURE, "error in map encoding");
+
+        struct ip_setting_handler *handler = find_handler(name);
+        if (!handler) {
+            erlcmd_encode_error_tuple(nb->resp, &nb->resp_index, "unknown_option");
+            return;
+        }
+        handler->set(handler, nb, ifname);
+    }
+    if (nb->last_error)
+        erlcmd_encode_error_tuple(nb->resp, &nb->resp_index, nb->last_error);
+    else
+        erlcmd_encode_ok(nb->resp, &nb->resp_index);
 }
 
 static void net_basic_request_handler(const char *req, void *cookie)
@@ -489,52 +634,50 @@ static void net_basic_request_handler(const char *req, void *cookie)
 
     // Commands are of the form {Command, Arguments}:
     // { atom(), term() }
-    int req_index = sizeof(uint16_t);
-    if (ei_decode_version(req, &req_index, NULL) < 0)
+    nb->req_index = sizeof(uint16_t);
+    nb->req = req;
+    if (ei_decode_version(nb->req, &nb->req_index, NULL) < 0)
         errx(EXIT_FAILURE, "Message version issue?");
 
     int arity;
-    if (ei_decode_tuple_header(req, &req_index, &arity) < 0 ||
+    if (ei_decode_tuple_header(nb->req, &nb->req_index, &arity) < 0 ||
             arity != 2)
         errx(EXIT_FAILURE, "expecting {cmd, args} tuple");
 
     char cmd[MAXATOMLEN];
-    if (ei_decode_atom(req, &req_index, cmd) < 0)
+    if (ei_decode_atom(nb->req, &nb->req_index, cmd) < 0)
         errx(EXIT_FAILURE, "expecting command atom");
 
     nb->resp_index = sizeof(uint16_t); // Space for payload size
     ei_encode_version(nb->resp, &nb->resp_index);
     if (strcmp(cmd, "interfaces") == 0) {
-	debug("interfaces");
+        debug("interfaces");
         net_basic_handle_interfaces(nb);
     } else if (strcmp(cmd, "ifinfo") == 0) {
-        if (ei_decode_string(req, &req_index, ifname) < 0)
+        if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "ifinfo requires ifname");
         debug("ifinfo: %s", ifname);
         net_basic_handle_ifinfo(nb, ifname);
     } else if (strcmp(cmd, "ifup") == 0) {
-        if (ei_decode_string(req, &req_index, ifname) < 0)
+        if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "ifup requires ifname");
         debug("ifup: %s", ifname);
         net_basic_set_ifflags(nb, ifname, IFF_UP, IFF_UP);
     } else if (strcmp(cmd, "ifdown") == 0) {
-        if (ei_decode_string(req, &req_index, ifname) < 0)
+        if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "ifdown requires ifname");
         debug("ifup: %s", ifname);
         net_basic_set_ifflags(nb, ifname, 0, IFF_UP);
-    } else if (strcmp(cmd, "ip") == 0) {
-        if (ei_decode_string(req, &req_index, ifname) < 0)
+    } else if (strcmp(cmd, "set") == 0) {
+        if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "ip requires ifname");
-        debug("ip: %s", ifname);
-        net_basic_handle_ip(nb, ifname);
-    } else if (strcmp(cmd, "set_default_gateway") == 0) {
-        char gateway[INET6_ADDRSTRLEN];
-
-        if (ei_decode_string(req, &req_index, ifname) < 0 ||
-            ei_decode_string(req, &req_index, gateway) < 0)
-            errx(EXIT_FAILURE, "set_default_gateway requires ifname, gateway");
-        debug("set_default_gateway: %s, %s", ifname, gateway);
-        net_basic_handle_set_default_gateway(nb, ifname, gateway);
+        debug("set: %s", ifname);
+        net_basic_handle_set(nb, ifname);
+    } else if (strcmp(cmd, "get") == 0) {
+        if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
+            errx(EXIT_FAILURE, "ip requires ifname");
+        debug("get: %s", ifname);
+        net_basic_handle_get(nb, ifname);
     } else
         errx(EXIT_FAILURE, "unknown command: %s", cmd);
 
@@ -551,27 +694,27 @@ int main(int argc, char *argv[])
     erlcmd_init(&handler, net_basic_request_handler, &nb);
 
     for (;;) {
-	struct pollfd fdset[2];
+        struct pollfd fdset[2];
 
-	fdset[0].fd = STDIN_FILENO;
-	fdset[0].events = POLLIN;
-	fdset[0].revents = 0;
+        fdset[0].fd = STDIN_FILENO;
+        fdset[0].events = POLLIN;
+        fdset[0].revents = 0;
 
         fdset[1].fd = mnl_socket_get_fd(nb.nl);
         fdset[1].events = POLLIN;
         fdset[1].revents = 0;
 
-	int rc = poll(fdset, 2, -1);
-	if (rc < 0) {
-	    // Retry if EINTR
-	    if (errno == EINTR)
-		continue;
+        int rc = poll(fdset, 2, -1);
+        if (rc < 0) {
+            // Retry if EINTR
+            if (errno == EINTR)
+                continue;
 
-	    err(EXIT_FAILURE, "poll");
-	}
+            err(EXIT_FAILURE, "poll");
+        }
 
-	if (fdset[0].revents & (POLLIN | POLLHUP))
-	    erlcmd_process(&handler);
+        if (fdset[0].revents & (POLLIN | POLLHUP))
+            erlcmd_process(&handler);
         if (fdset[1].revents & (POLLIN | POLLHUP))
             net_basic_process(&nb);
     }

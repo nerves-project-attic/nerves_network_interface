@@ -35,9 +35,18 @@ struct erlcmd
 };
 
 void erlcmd_init(struct erlcmd *handler,
-		 void (*request_handler)(const char *req, void *cookie),
-		 void *cookie);
+                 void (*request_handler)(const char *req, void *cookie),
+                 void *cookie);
 void erlcmd_send(char *response, size_t len);
 void erlcmd_process(struct erlcmd *handler);
+
+/*
+ * Message encoding and decoding helpers
+ */
+int erlcmd_decode_string(const char *buf, int *index, char *dest, int maxlength);
+int erlcmd_decode_atom(const char *buf, int *index, char *dest, int maxlength);
+
+int erlcmd_encode_ok(char *buf, int *index);
+int erlcmd_encode_error_tuple(char *buf, int *index, const char *error_atom);
 
 #endif

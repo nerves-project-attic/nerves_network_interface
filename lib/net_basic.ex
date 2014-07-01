@@ -32,7 +32,7 @@ defmodule NetBasic do
   The functions that return information don't require that the `NetBasic`'s
   associated port process has privileged access to the system. If you
   need to change any parameters or bring up or down an interface, you should
-  ensure that the port process is running as a privileged user. 
+  ensure that the port process is running as a privileged user.
   """
 
   defstruct port: nil,
@@ -78,10 +78,10 @@ defmodule NetBasic do
   end
 
   @doc """
-  Return link-level information on the specified interface.
+  Return link-level status on the specified interface.
   """
-  def ifinfo(pid, ifname) do
-    GenServer.call(pid, {:ifinfo, ifname})
+  def status(pid, ifname) do
+    GenServer.call(pid, {:status, ifname})
   end
 
   @doc """
@@ -99,10 +99,10 @@ defmodule NetBasic do
   end
 
   @doc """
-  Return IP settings for the specified interface.
+  Return IP configuration for the specified interface.
   """
-  def get(pid, ifname) do
-    GenServer.call(pid, {:get, ifname})
+  def get_config(pid, ifname) do
+    GenServer.call(pid, {:get_config, ifname})
   end
 
   @doc """
@@ -112,10 +112,15 @@ defmodule NetBasic do
     * `:ipv4_address` - the IPv4 address of the interface
     * `:ipv4_broadcast` - the IPv4 broadcast address for the interface
     * `:ipv4_subnet_mask` - the IPv4 subnet mask
-    * `:ipv4_gateway` - the default gateway 
+    * `:ipv4_gateway` - the default gateway
+
+  Options can be specified either as a keyword list or as a map.
   """
-  def set(pid, ifname, options) do
-    GenServer.call(pid, {:set, ifname, options})
+  def set_config(pid, ifname, options) when is_list(options) do
+    set_config(pid, ifname, :maps.from_list(options))
+  end
+  def set_config(pid, ifname, options) when is_map(options) do
+    GenServer.call(pid, {:set_config, ifname, options})
   end
 
   def init(event_manager) do
@@ -129,9 +134,12 @@ defmodule NetBasic do
     {:ok, response} = call_port(state, :interfaces, [])
     {:reply, response, state }
   end
-  def handle_call({:ifinfo, ifname}, _from, state) do
-    {:ok, response} = call_port(state, :ifinfo, ifname)
+  def handle_call({:status, ifname}, _from, state) do
+    {:ok, response} = call_port(state, :status, ifname)
     {:reply, response, state }
+  end
+  def handle_call(:event_manager, _from, state) do
+    {:reply, state.manager, state}
   end
   def handle_call({:ifup, ifname}, _from, state) do
     {:ok, response} = call_port(state, :ifup, ifname)
@@ -141,12 +149,12 @@ defmodule NetBasic do
     {:ok, response} = call_port(state, :ifdown, ifname)
     {:reply, response, state }
   end
-  def handle_call({:set, ifname, options}, _from, state) do
-    {:ok, response} = call_port(state, :set, {ifname, options})
+  def handle_call({:set_config, ifname, options}, _from, state) do
+    {:ok, response} = call_port(state, :set_config, {ifname, options})
     {:reply, response, state }
   end
-  def handle_call({:get, ifname}, _from, state) do
-    {:ok, response} = call_port(state, :get, ifname)
+  def handle_call({:get_config, ifname}, _from, state) do
+    {:ok, response} = call_port(state, :get_config, ifname)
     {:reply, response, state }
   end
 
@@ -155,8 +163,8 @@ defmodule NetBasic do
   end
 
   def handle_info({_, {:data, message}}, state) do
-    m = :erlang.binary_to_term(message)
-    IO.puts "Got #{inspect m}"
+    {notif, data} = :erlang.binary_to_term(message)
+    GenEvent.notify(state.manager, {:net_basic, self, notif, data})
     {:noreply, state}
   end
   def handle_info({_, {:exit_status, _}}, state) do

@@ -216,7 +216,10 @@ static void net_basic_process(struct net_basic *nb)
     nb->resp_index = sizeof(uint16_t); // Skip over payload size
     ei_encode_version(nb->resp, &nb->resp_index);
 
-    // The only notifications are interface updates.
+    ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
+
+    // Currently, the only notifications are interface changes.
+    ei_encode_atom(nb->resp, &nb->resp_index, "ifchanged");
     if (mnl_cb_run(buf, bytecount, 0, 0, net_basic_build_ifinfo, nb) <= 0)
         errx(EXIT_FAILURE, "mnl_cb_run");
 
@@ -236,7 +239,7 @@ static void net_basic_handle_interfaces(struct net_basic *nb)
     ei_encode_empty_list(nb->resp, &nb->resp_index);
 }
 
-static void net_basic_handle_ifinfo(struct net_basic *nb,
+static void net_basic_handle_status(struct net_basic *nb,
                                     const char *ifname)
 {
     struct nlmsghdr *nlh;
@@ -653,11 +656,11 @@ static void net_basic_request_handler(const char *req, void *cookie)
     if (strcmp(cmd, "interfaces") == 0) {
         debug("interfaces");
         net_basic_handle_interfaces(nb);
-    } else if (strcmp(cmd, "ifinfo") == 0) {
+    } else if (strcmp(cmd, "status") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
-            errx(EXIT_FAILURE, "ifinfo requires ifname");
+            errx(EXIT_FAILURE, "status requires ifname");
         debug("ifinfo: %s", ifname);
-        net_basic_handle_ifinfo(nb, ifname);
+        net_basic_handle_status(nb, ifname);
     } else if (strcmp(cmd, "ifup") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "ifup requires ifname");
@@ -668,12 +671,12 @@ static void net_basic_request_handler(const char *req, void *cookie)
             errx(EXIT_FAILURE, "ifdown requires ifname");
         debug("ifup: %s", ifname);
         net_basic_set_ifflags(nb, ifname, 0, IFF_UP);
-    } else if (strcmp(cmd, "set") == 0) {
+    } else if (strcmp(cmd, "set_config") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "ip requires ifname");
         debug("set: %s", ifname);
         net_basic_handle_set(nb, ifname);
-    } else if (strcmp(cmd, "get") == 0) {
+    } else if (strcmp(cmd, "get_config") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "ip requires ifname");
         debug("get: %s", ifname);

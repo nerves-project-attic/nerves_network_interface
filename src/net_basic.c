@@ -32,7 +32,7 @@
 
 #include "erlcmd.h"
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
 #define debug(...) do { fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\r\n"); } while(0)
 #else
@@ -669,16 +669,18 @@ static void net_basic_request_handler(const char *req, void *cookie)
     } else if (strcmp(cmd, "ifdown") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "ifdown requires ifname");
-        debug("ifup: %s", ifname);
+        debug("ifdown: %s", ifname);
         net_basic_set_ifflags(nb, ifname, 0, IFF_UP);
     } else if (strcmp(cmd, "set_config") == 0) {
-        if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
-            errx(EXIT_FAILURE, "ip requires ifname");
+        if (ei_decode_tuple_header(nb->req, &nb->req_index, &arity) < 0 ||
+                arity != 2 ||
+                erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
+            errx(EXIT_FAILURE, "set_config requires {ifname, parameters}");
         debug("set: %s", ifname);
         net_basic_handle_set(nb, ifname);
     } else if (strcmp(cmd, "get_config") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
-            errx(EXIT_FAILURE, "ip requires ifname");
+            errx(EXIT_FAILURE, "get_config requires ifname");
         debug("get: %s", ifname);
         net_basic_handle_get(nb, ifname);
     } else

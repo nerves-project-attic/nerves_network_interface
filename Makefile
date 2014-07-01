@@ -35,8 +35,13 @@ priv/net_basic: src/erlcmd.o src/net_basic.o
 	mkdir -p priv
 	$(CC) $^ $(ERL_LDFLAGS) $(LDFLAGS) -o $@
 
+# setuid root net_basic so that it can configure network interfaces (this is not run by default)
+setuid: priv/net_basic
+	sudo chown root:root $^
+	sudo chmod +s $^
+
 clean:
 	$(MIX) clean
 	rm -f priv/net_basic src/*.o
 
-.PHONY: all compile test clean
+.PHONY: all compile test clean setuid

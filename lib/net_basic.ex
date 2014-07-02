@@ -52,8 +52,8 @@ defmodule NetBasic do
   Start and link a NetBasic process. Use the specified GenEvent for sending
   all network link events.
   """
-  def start_link(event_manager) do
-    GenServer.start_link(__MODULE__, event_manager)
+  def start_link(event_manager, opts \\ []) do
+    GenServer.start_link(__MODULE__, event_manager, opts)
   end
 
   @doc """

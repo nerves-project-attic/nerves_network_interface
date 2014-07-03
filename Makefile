@@ -15,7 +15,7 @@ ERL_CFLAGS ?= -I/usr/local/include -I$(EILOC) -I/usr/lib/erlang/usr/include/
 ERL_EI_LIBDIR ?= /usr/lib/erlang/usr/lib
 ERL_LDFLAGS ?= -L$(ERL_EI_LIBDIR) -lei
 
-LDFLAGS ?= -lmnl
+LDFLAGS += -lmnl
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter
 CC ?= $(CROSSCOMPILER)gcc
 MIX ?= mix

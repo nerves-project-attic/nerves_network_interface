@@ -21,6 +21,16 @@ working with you to integrate IPv6 support.
 
 ## Building
 
+This module requires [libmnl](http://netfilter.org/projects/libmnl/) to build.
+If you're running a Debian-based system, you can get it by running:
+
+    sudo apt-get install libmnl-dev
+
+If building standalone, just run `make`. To pull in as a dependency to your
+application, add the following line to your `mix.exs` deps list:
+
+     {:net_basic, github: "fhunleth/net_basic.ex"}
+
 ## Permissions
 
 If an application just needs to get information about the LAN interfaces,

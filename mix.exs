@@ -11,7 +11,7 @@ defmodule NetBasic.Mixfile do
   def project do
     [app: :net_basic,
      version: "0.0.1",
-     elixir: "~> 0.14.1",
+     elixir: "~> 0.15.1",
      compilers: [:NetBasic, :elixir, :app],
      deps: deps,
      package: package,

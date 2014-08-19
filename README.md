@@ -47,7 +47,11 @@ security implications in your system.
 
 ## Running
 
-The first step is to create a `NetBasic` process. By default, `NetBasic` creates
+Start `iex`:
+
+    $ iex -S mix
+
+The next step is to create a `NetBasic` process. By default, `NetBasic` creates
 a GenEvent process for notifying interface change events, but you can supply one
 as an argument to `NetBasic.start_link/1`.
 

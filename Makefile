@@ -3,12 +3,16 @@
 # CC            C compiler
 # CROSSCOMPILE	crosscompiler prefix, if any
 # CFLAGS	compiler flags for compiling all C files
+# ERL_PATH      the path to the erlang installation (e.g., /usr/lib/erlang)
 # ERL_CFLAGS	additional compiler flags for files using Erlang header files
 # ERL_EI_LIBDIR path to libei.a
 # LDFLAGS	linker flags for linking all binaries
 # ERL_LDFLAGS	additional linker flags for projects referencing Erlang libraries
 # MIX		path to mix
 
+# Note: If crosscompiling, either ERL_PATH or both ERL_CFLAGS and ERL_LDFLAGS need
+#       to be specified or you'll get the host erl's versions and the linking step
+#       will fail.
 ERL_PATH ?= $(shell erl -noshell -eval "io:format(\"~s\", [code:root_dir()])." -s init stop)
 ERL_CFLAGS ?= -I$(ERL_PATH)/usr/include
 

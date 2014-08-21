@@ -9,10 +9,10 @@
 # ERL_LDFLAGS	additional linker flags for projects referencing Erlang libraries
 # MIX		path to mix
 
-EILOC:=$(shell find /usr/local/lib/erlang /usr/lib/erlang -name ei.h -printf '%h\n' 2> /dev/null | head -1)
-ERL_CFLAGS ?= -I/usr/local/include -I$(EILOC) -I/usr/lib/erlang/usr/include/
+ERL_PATH ?= $(shell erl -noshell -eval "io:format(\"~s\", [code:root_dir()])." -s init stop)
+ERL_CFLAGS ?= -I$(ERL_PATH)/usr/include
 
-ERL_EI_LIBDIR ?= /usr/lib/erlang/usr/lib
+ERL_EI_LIBDIR ?= $(ERL_PATH)/usr/lib
 ERL_LDFLAGS ?= -L$(ERL_EI_LIBDIR) -lei
 
 LDFLAGS += -lmnl

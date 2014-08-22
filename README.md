@@ -24,14 +24,20 @@ If you're running a Debian-based system, you can get it by running:
 
     sudo apt-get install libmnl-dev
 
-If building standalone, just run `make`. To pull in as a dependency to your
-application, add the following line to your `mix.exs` deps list:
+If building standalone, just run `make`. The Makefile runs sudo to set the
+permissions on the `net_basic` binary, so you'll be asked your password towards
+the end. If you do not require additional privileges to modify network
+interfaces on your system, you can bypass the calls to sudo by setting the
+SUDO environment variable to `true`. I.e., `SUDO=true make`.
+
+To pull in as a dependency to your application, add the following line to your
+`mix.exs` deps list:
 
      {:net_basic, github: "fhunleth/net_basic.ex"}
 
 ## Permissions
 
-If an application just needs to get information about the LAN interfaces,
+If an application just needs to get information about LAN interfaces,
 this library does not require any additional privileges. If it is necessary
 to modify the network interfaces, the same privilege needed to run applications
 like `ifconfig` and `ip` will be needed. This can be accomplished by setting
@@ -41,7 +47,8 @@ the `net_basic` binary to be setuid root. E.g.,
     chmod +s priv/net_basic
 
 Keep in mind that running `setuid` on the net_basic port binary could have
-security implications in your system.
+security implications in your system. The `Makefile` will automatically call
+`sudo` to do this, but that can be disabled.
 
 ## Running
 

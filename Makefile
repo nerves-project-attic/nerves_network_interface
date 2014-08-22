@@ -2,13 +2,15 @@
 #
 # CC            C compiler
 # CROSSCOMPILE	crosscompiler prefix, if any
-# CFLAGS	compiler flags for compiling all C files
+# CFLAGS        compiler flags for compiling all C files
 # ERL_PATH      the path to the erlang installation (e.g., /usr/lib/erlang)
-# ERL_CFLAGS	additional compiler flags for files using Erlang header files
+# ERL_CFLAGS    additional compiler flags for files using Erlang header files
 # ERL_EI_LIBDIR path to libei.a
-# LDFLAGS	linker flags for linking all binaries
-# ERL_LDFLAGS	additional linker flags for projects referencing Erlang libraries
-# MIX		path to mix
+# LDFLAGS       linker flags for linking all binaries
+# ERL_LDFLAGS   additional linker flags for projects referencing Erlang libraries
+# MIX           path to mix
+# SUDO_ASKPASS  path to ssh-askpass when modifying ownership of net_basic
+# SUDO          path to SUDO. If you don't want the privileged parts to run, set to "true"
 
 # Note: If crosscompiling, either ERL_PATH or both ERL_CFLAGS and ERL_LDFLAGS need
 #       to be specified or you'll get the host erl's versions and the linking step
@@ -23,6 +25,8 @@ LDFLAGS += -lmnl
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter
 CC ?= $(CROSSCOMPILER)gcc
 MIX ?= mix
+SUDO_ASKPASS ?= /usr/bin/ssh-askpass
+SUDO ?= sudo
 
 all: compile
 
@@ -38,14 +42,11 @@ test:
 priv/net_basic: src/erlcmd.o src/net_basic.o
 	mkdir -p priv
 	$(CC) $^ $(ERL_LDFLAGS) $(LDFLAGS) -o $@
-
-# setuid root net_basic so that it can configure network interfaces (this is not run by default)
-setuid: priv/net_basic
-	sudo chown root:root $^
-	sudo chmod +s $^
+	# setuid root net_basic so that it can configure network interfaces
+	SUDO_ASKPASS=$(SUDO_ASKPASS) $(SUDO) -- sh -c 'chown root:root $@; chmod +s $@'
 
 clean:
 	$(MIX) clean
 	rm -f priv/net_basic src/*.o
 
-.PHONY: all compile test clean setuid
+.PHONY: all compile test clean

@@ -112,44 +112,51 @@ static int collect_if_attrs(const struct nlattr *attr, void *data)
     return MNL_CB_OK;
 }
 
-static void encode_long(struct net_basic *nb, const char *key, long value)
+static void encode_kv_long(struct net_basic *nb, const char *key, long value)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, key);
     ei_encode_long(nb->resp, &nb->resp_index, value);
 }
 
-static void encode_ulong(struct net_basic *nb, const char *key, unsigned long value)
+static void encode_kv_ulong(struct net_basic *nb, const char *key, unsigned long value)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, key);
     ei_encode_ulong(nb->resp, &nb->resp_index, value);
 }
-static void encode_bool(struct net_basic *nb, const char *key, int value)
+static void encode_kv_bool(struct net_basic *nb, const char *key, int value)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, key);
     ei_encode_boolean(nb->resp, &nb->resp_index, value);
 }
-static void encode_string(struct net_basic *nb, const char *key, const char *str)
+static void encode_string(char *buf, int *index, const char *str)
+{
+    // Encode strings as binaries so that we get Elixir strings
+    // NOTE: the strings that we encounter here are expected to be ASCII to
+    //       my knowledge
+    ei_encode_binary(buf, index, str, strlen(str));
+}
+static void encode_kv_string(struct net_basic *nb, const char *key, const char *str)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, key);
-    ei_encode_string(nb->resp, &nb->resp_index, str);
+    encode_string(nb->resp, &nb->resp_index, str);
 }
 
-static void encode_stats(struct net_basic *nb, const char *key, struct nlattr *attr)
+static void encode_kv_stats(struct net_basic *nb, const char *key, struct nlattr *attr)
 {
     struct rtnl_link_stats *stats = (struct rtnl_link_stats *) mnl_attr_get_payload(attr);
 
     ei_encode_atom(nb->resp, &nb->resp_index, key);
     ei_encode_map_header(nb->resp, &nb->resp_index, 10);
-    encode_ulong(nb, "rx_packets", stats->rx_packets);
-    encode_ulong(nb, "tx_packets", stats->tx_packets);
-    encode_ulong(nb, "rx_bytes", stats->rx_bytes);
-    encode_ulong(nb, "tx_bytes", stats->tx_bytes);
-    encode_ulong(nb, "rx_errors", stats->rx_errors);
-    encode_ulong(nb, "tx_errors", stats->tx_errors);
-    encode_ulong(nb, "rx_dropped", stats->rx_dropped);
-    encode_ulong(nb, "tx_dropped", stats->tx_dropped);
-    encode_ulong(nb, "multicast", stats->multicast);
-    encode_ulong(nb, "collisions", stats->collisions);
+    encode_kv_ulong(nb, "rx_packets", stats->rx_packets);
+    encode_kv_ulong(nb, "tx_packets", stats->tx_packets);
+    encode_kv_ulong(nb, "rx_bytes", stats->rx_bytes);
+    encode_kv_ulong(nb, "tx_bytes", stats->tx_bytes);
+    encode_kv_ulong(nb, "rx_errors", stats->rx_errors);
+    encode_kv_ulong(nb, "tx_errors", stats->tx_errors);
+    encode_kv_ulong(nb, "rx_dropped", stats->rx_dropped);
+    encode_kv_ulong(nb, "tx_dropped", stats->tx_dropped);
+    encode_kv_ulong(nb, "multicast", stats->multicast);
+    encode_kv_ulong(nb, "collisions", stats->collisions);
 }
 
 static int net_basic_build_ifinfo(const struct nlmsghdr *nlh, void *data)
@@ -171,21 +178,21 @@ static int net_basic_build_ifinfo(const struct nlmsghdr *nlh, void *data)
 
     ei_encode_map_header(nb->resp, &nb->resp_index, count);
 
-    encode_long(nb, "index", ifm->ifi_index);
+    encode_kv_long(nb, "index", ifm->ifi_index);
 
     ei_encode_atom(nb->resp, &nb->resp_index, "type");
     ei_encode_atom(nb->resp, &nb->resp_index, ifm->ifi_type == ARPHRD_ETHER ? "ethernet" : "other");
 
-    encode_bool(nb, "is_up", ifm->ifi_flags & IFF_UP);
-    encode_bool(nb, "is_broadcast", ifm->ifi_flags & IFF_BROADCAST);
-    encode_bool(nb, "is_running", ifm->ifi_flags & IFF_RUNNING);
-    encode_bool(nb, "is_lower_up", ifm->ifi_flags & IFF_LOWER_UP);
-    encode_bool(nb, "is_multicast", ifm->ifi_flags & IFF_MULTICAST);
+    encode_kv_bool(nb, "is_up", ifm->ifi_flags & IFF_UP);
+    encode_kv_bool(nb, "is_broadcast", ifm->ifi_flags & IFF_BROADCAST);
+    encode_kv_bool(nb, "is_running", ifm->ifi_flags & IFF_RUNNING);
+    encode_kv_bool(nb, "is_lower_up", ifm->ifi_flags & IFF_LOWER_UP);
+    encode_kv_bool(nb, "is_multicast", ifm->ifi_flags & IFF_MULTICAST);
 
     if (tb[IFLA_MTU])
-        encode_ulong(nb, "mtu", mnl_attr_get_u32(tb[IFLA_MTU]));
+        encode_kv_ulong(nb, "mtu", mnl_attr_get_u32(tb[IFLA_MTU]));
     if (tb[IFLA_IFNAME])
-        encode_string(nb, "ifname", mnl_attr_get_str(tb[IFLA_IFNAME]));
+        encode_kv_string(nb, "ifname", mnl_attr_get_str(tb[IFLA_IFNAME]));
     if (tb[IFLA_ADDRESS]) {
         ei_encode_atom(nb->resp, &nb->resp_index, "mac_address");
         ei_encode_binary(nb->resp, &nb->resp_index, mnl_attr_get_payload(tb[IFLA_ADDRESS]), mnl_attr_get_payload_len(tb[IFLA_ADDRESS]));
@@ -195,11 +202,11 @@ static int net_basic_build_ifinfo(const struct nlmsghdr *nlh, void *data)
         ei_encode_binary(nb->resp, &nb->resp_index, mnl_attr_get_payload(tb[IFLA_BROADCAST]), mnl_attr_get_payload_len(tb[IFLA_BROADCAST]));
     }
     if (tb[IFLA_LINK])
-        encode_ulong(nb, "link", mnl_attr_get_u32(tb[IFLA_LINK]));
+        encode_kv_ulong(nb, "link", mnl_attr_get_u32(tb[IFLA_LINK]));
     if (tb[IFLA_OPERSTATE])
-        encode_string(nb, "operstate", mnl_attr_get_str(tb[IFLA_OPERSTATE]));
+        encode_kv_string(nb, "operstate", mnl_attr_get_str(tb[IFLA_OPERSTATE]));
     if (tb[IFLA_STATS])
-        encode_stats(nb, "stats", tb[IFLA_STATS]);
+        encode_kv_stats(nb, "stats", tb[IFLA_STATS]);
 
     return MNL_CB_OK;
 }
@@ -233,7 +240,7 @@ static void net_basic_handle_interfaces(struct net_basic *nb)
     while (ioctl(nb->inet_fd, SIOCGIFNAME, &ifr) >= 0) {
         debug("Found interface %s.", ifr.ifr_name);
         ei_encode_list_header(nb->resp, &nb->resp_index, 1);
-        ei_encode_string(nb->resp, &nb->resp_index, ifr.ifr_name);
+        encode_string(nb->resp, &nb->resp_index, ifr.ifr_name);
         ifr.ifr_ifindex++;
     }
     ei_encode_empty_list(nb->resp, &nb->resp_index);
@@ -447,8 +454,7 @@ static int get_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic
             nb->last_error = strerror(errno); // Think about this
             return -1;
         }
-        ei_encode_atom(nb->resp, &nb->resp_index, handler->name);
-        ei_encode_string(nb->resp, &nb->resp_index, addrstr);
+        encode_kv_string(nb, handler->name, addrstr);
     } else {
         debug("got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
         nb->last_error = "bad family";
@@ -529,8 +535,6 @@ static int add_default_gateway(struct net_basic *nb, const char *ifname, const c
     return 0;
 }
 
-
-
 static int set_default_gateway(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname)
 {
     char gateway[INET_ADDRSTRLEN];
@@ -567,8 +571,7 @@ static int get_default_gateway(struct ip_setting_handler *handler, struct net_ba
     find_default_gateway(nb, oif, gateway_ip);
 
     // If the gateway isn't found, then the empty string is what we want.
-    ei_encode_atom(nb->resp, &nb->resp_index, handler->name);
-    ei_encode_string(nb->resp, &nb->resp_index, gateway_ip);
+    encode_kv_string(nb, handler->name, gateway_ip);
     return 0;
 }
 

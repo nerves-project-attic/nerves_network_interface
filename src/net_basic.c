@@ -620,12 +620,13 @@ static void net_basic_handle_set(struct net_basic *nb,
         if (erlcmd_decode_atom(nb->req, &nb->req_index, name, sizeof(name)) < 0)
             errx(EXIT_FAILURE, "error in map encoding");
 
+        // Look up the option. If we don't know it, silently ignore it so that
+        // the caller can pass in maps that contain options for other code.
         struct ip_setting_handler *handler = find_handler(name);
-        if (!handler) {
-            erlcmd_encode_error_tuple(nb->resp, &nb->resp_index, "unknown_option");
-            return;
-        }
-        handler->set(handler, nb, ifname);
+        if (handler)
+            handler->set(handler, nb, ifname);
+        else
+            ei_skip_term(nb->req, &nb->req_index);
     }
     if (nb->last_error)
         erlcmd_encode_error_tuple(nb->resp, &nb->resp_index, nb->last_error);

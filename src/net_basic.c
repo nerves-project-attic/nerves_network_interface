@@ -417,6 +417,11 @@ static int set_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic
     if (erlcmd_decode_string(nb->req, &nb->req_index, ipaddr, INET_ADDRSTRLEN) < 0)
         errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
 
+    // Be forgiving and if the user specifies an empty IP address, just skip
+    // this request.
+    if (ipaddr[0] == '\0')
+        return 0;
+
     struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
     addr->sin_family = AF_INET;
     if (inet_pton(AF_INET, ipaddr, &addr->sin_addr) <= 0) {

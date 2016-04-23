@@ -48,7 +48,7 @@ defmodule NetBasic do
     GenServer.start_link(__MODULE__, manager)
   end
 
-  """
+  @doc """
   Start and link a NetBasic process. Use the specified GenEvent for sending
   all network link events.
   """

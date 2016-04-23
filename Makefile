@@ -47,7 +47,7 @@ test:
 	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) -o $@ $<
 
 priv/net_basic: src/erlcmd.o src/net_basic.o
-	mkdir -p priv
+	@mkdir -p priv
 	$(CC) $^ $(ERL_LDFLAGS) $(LDFLAGS) -o $@
 	# setuid root net_basic so that it can configure network interfaces
 	SUDO_ASKPASS=$(SUDO_ASKPASS) $(SUDO) -- sh -c 'chown root:root $@; chmod +s $@'

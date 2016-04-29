@@ -3,7 +3,7 @@ defmodule Mix.Tasks.Compile.NetBasic do
   def run(_) do
     {result, _error_code} = System.cmd("make", ["priv/net_basic"], stderr_to_stdout: true)
     IO.binwrite result
-    :ok
+    Mix.Project.build_structure
   end
 end
 
@@ -14,8 +14,9 @@ defmodule NetBasic.Mixfile do
     [app: :net_basic,
      version: "0.0.1",
      elixir: ">= 1.0.0 and < 2.0.0",
-     compilers: [:NetBasic, :elixir, :app],
+     compilers: Mix.compilers ++ [:NetBasic],
      deps: deps,
+     docs: [extras: ["README.md"]],
      package: package,
      description: description
     ]
@@ -41,16 +42,11 @@ defmodule NetBasic.Mixfile do
       links: %{"GitHub" => "https://github.com/fhunleth/net_basic.ex"}}
   end
 
-  # Dependencies can be hex.pm packages:
-  #
-  #   {:mydep, "~> 0.3.0"}
-  #
-  # Or git/path repositories:
-  #
-  #   {:mydep, git: "https://github.com/elixir-lang/mydep.git", tag: "0.1"}
-  #
-  # Type `mix help deps` for more examples and options
   defp deps do
-    []
+    [
+      {:earmark, "~> 0.1", only: :dev},
+      {:ex_doc, "~> 0.11", only: :dev},
+      {:credo, "~> 0.3", only: [:dev, :test]}
+    ]
   end
 end

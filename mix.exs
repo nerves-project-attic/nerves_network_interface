@@ -1,7 +1,9 @@
 defmodule Mix.Tasks.Compile.NetBasic do
   @shortdoc "Compiles the port binary"
   def run(_) do
-    0=Mix.Shell.IO.cmd("make priv/net_basic")
+    {result, _error_code} = System.cmd("make", ["priv/net_basic"], stderr_to_stdout: true)
+    IO.binwrite result
+    :ok
   end
 end
 
@@ -11,7 +13,7 @@ defmodule NetBasic.Mixfile do
   def project do
     [app: :net_basic,
      version: "0.0.1",
-     elixir: "~> 1.0.0-rc1",
+     elixir: ">= 1.0.0 and < 2.0.0",
      compilers: [:NetBasic, :elixir, :app],
      deps: deps,
      package: package,

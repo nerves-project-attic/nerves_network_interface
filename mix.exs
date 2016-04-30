@@ -37,7 +37,7 @@ defmodule NetBasic.Mixfile do
 
   defp package do
     %{files: ["lib", "src/*.[ch]", "test", "mix.exs", "README.md", "LICENSE", "Makefile"],
-      contributors: ["Frank Hunleth"],
+      maintainers: ["Frank Hunleth"],
       licenses: ["Apache-2.0"],
       links: %{"GitHub" => "https://github.com/fhunleth/net_basic.ex"}}
   end

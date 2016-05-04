@@ -1,8 +1,11 @@
 defmodule Mix.Tasks.Compile.NetBasic do
   @shortdoc "Compiles the port binary"
   def run(_) do
-    {result, _error_code} = System.cmd("make", ["priv/net_basic"], stderr_to_stdout: true)
+    {result, error_code} = System.cmd("make", ["all"], stderr_to_stdout: true)
     IO.binwrite result
+    if error_code != 0 do
+      raise Mix.Error, "Make returned an error"
+    end
     Mix.Project.build_structure
   end
 end

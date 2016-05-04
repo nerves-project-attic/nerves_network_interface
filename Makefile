@@ -23,6 +23,7 @@ ERL_LDFLAGS ?= -L$(ERL_EI_LIBDIR) -lei
 
 LDFLAGS += -lmnl
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter
+CFLAGS += -std=c99
 CC ?= $(CROSSCOMPILE)gcc
 MIX ?= mix
 
@@ -35,13 +36,9 @@ else
 SUDO ?= true
 endif
 
-all: compile
+.PHONY: all clean
 
-compile:
-	$(MIX) compile
-
-test:
-	$(MIX) test
+all: priv/net_basic
 
 %.o: %.c
 	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) -o $@ $<
@@ -56,4 +53,5 @@ clean:
 	$(MIX) clean
 	rm -f priv/net_basic src/*.o
 
-.PHONY: all compile test clean
+realclean:
+	rm -fr _build priv/net_basic src/*.o

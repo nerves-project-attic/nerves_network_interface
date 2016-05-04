@@ -12,7 +12,7 @@ defmodule NetBasic.Mixfile do
 
   def project do
     [app: :net_basic,
-     version: "0.0.1",
+     version: "0.2.0",
      elixir: ">= 1.0.0 and < 2.0.0",
      compilers: Mix.compilers ++ [:NetBasic],
      deps: deps,

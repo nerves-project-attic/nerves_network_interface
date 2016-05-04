@@ -1,4 +1,5 @@
-# NetBasic [![Build Status](https://travis-ci.org/fhunleth/net_basic.ex.svg)](https://travis-ci.org/fhunleth/net_basic.ex)
+# NetBasic
+[![Build Status](https://travis-ci.org/fhunleth/net_basic.ex.svg)](https://travis-ci.org/fhunleth/net_basic.ex)
 
 This package enables Elixir applications to configure, get the status of,
 and listen to events from LAN and WiFi network interfaces. It is not meant

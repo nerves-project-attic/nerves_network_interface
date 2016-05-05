@@ -221,6 +221,7 @@ static void net_basic_process(struct net_basic *nb)
 
     // Create the notification
     nb->resp_index = sizeof(uint16_t); // Skip over payload size
+    nb->resp[nb->resp_index++] = 'n';
     ei_encode_version(nb->resp, &nb->resp_index);
 
     ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
@@ -661,6 +662,7 @@ static void net_basic_request_handler(const char *req, void *cookie)
         errx(EXIT_FAILURE, "expecting command atom");
 
     nb->resp_index = sizeof(uint16_t); // Space for payload size
+    nb->resp[nb->resp_index++] = 'r'; // Indicate response
     ei_encode_version(nb->resp, &nb->resp_index);
     if (strcmp(cmd, "interfaces") == 0) {
         debug("interfaces");

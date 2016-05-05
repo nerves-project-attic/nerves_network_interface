@@ -162,7 +162,7 @@ defmodule NetBasic do
     {:stop, :normal, state}
   end
 
-  def handle_info({_, {:data, message}}, state) do
+  def handle_info({_, {:data, <<?n, message::binary>>}}, state) do
     {notif, data} = :erlang.binary_to_term(message)
     GenEvent.notify(state.manager, {:net_basic, self, notif, data})
     {:noreply, state}
@@ -176,9 +176,10 @@ defmodule NetBasic do
     msg = {command, arguments}
     send state.port, {self, {:command, :erlang.term_to_binary(msg)}}
     receive do
-      {_, {:data, response}} ->
+      {_, {:data, <<?r, response::binary>>}} ->
         {:ok, :erlang.binary_to_term(response)}
-        _ -> :error
+    after
+      1_000 -> :error
     end
   end
 end

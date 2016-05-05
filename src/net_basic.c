@@ -26,6 +26,7 @@
 #include <libmnl/libmnl.h>
 #include <linux/if.h>
 #include <net/if_arp.h>
+#include <net/if.h>
 #include <net/route.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
@@ -236,14 +237,20 @@ static void net_basic_process(struct net_basic *nb)
 
 static void net_basic_handle_interfaces(struct net_basic *nb)
 {
-    struct ifreq ifr;
-    ifr.ifr_ifindex = 1;
-    while (ioctl(nb->inet_fd, SIOCGIFNAME, &ifr) >= 0) {
-        debug("Found interface %s.", ifr.ifr_name);
+    struct if_nameindex *if_ni = if_nameindex();
+    if (if_ni == NULL)
+        err(EXIT_FAILURE, "if_nameindex");
+
+    for (struct if_nameindex *i = if_ni;
+         ! (i->if_index == 0 && i->if_name == NULL);
+         i++) {
+        debug("Found interface %s.", i->if_name);
         ei_encode_list_header(nb->resp, &nb->resp_index, 1);
-        encode_string(nb->resp, &nb->resp_index, ifr.ifr_name);
-        ifr.ifr_ifindex++;
+        encode_string(nb->resp, &nb->resp_index, i->if_name);
     }
+
+    if_freenameindex(if_ni);
+
     ei_encode_empty_list(nb->resp, &nb->resp_index);
 }
 

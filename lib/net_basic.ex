@@ -14,6 +14,7 @@
 
 defmodule NetBasic do
   use GenServer
+  require Logger
 
   @moduledoc """
   This module exposes a simplified view of Linux network configuration to
@@ -164,6 +165,7 @@ defmodule NetBasic do
 
   def handle_info({_, {:data, <<?n, message::binary>>}}, state) do
     {notif, data} = :erlang.binary_to_term(message)
+    Logger.info "net_basic received #{inspect notif} and #{inspect data}"
     GenEvent.notify(state.manager, {:net_basic, self, notif, data})
     {:noreply, state}
   end

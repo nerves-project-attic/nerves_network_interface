@@ -24,10 +24,10 @@
 
 #include <arpa/inet.h>
 #include <libmnl/libmnl.h>
-#include <linux/if.h>
 #include <net/if_arp.h>
 #include <net/if.h>
 #include <net/route.h>
+#include <linux/if.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 
@@ -41,9 +41,12 @@
 #endif
 
 struct net_basic {
-    // Netlink socket information
+    // NETLINK_ROUTE socket information
     struct mnl_socket *nl;
     int seq;
+
+    // NETLINK_KOBJECT_UEVENT socket information
+    struct mnl_socket *nl_uevent;
 
     // AF_INET socket for ioctls
     int inet_fd;
@@ -68,10 +71,18 @@ static void net_basic_init(struct net_basic *nb)
     memset(nb, 0, sizeof(*nb));
     nb->nl = mnl_socket_open(NETLINK_ROUTE);
     if (!nb->nl)
-        errx(EXIT_FAILURE, "mnl_socket_open");
+        err(EXIT_FAILURE, "mnl_socket_open (NETLINK_ROUTE)");
 
     if (mnl_socket_bind(nb->nl, RTMGRP_LINK, MNL_SOCKET_AUTOPID) < 0)
-        errx(EXIT_FAILURE, "mnl_socket_bind");
+        err(EXIT_FAILURE, "mnl_socket_bind");
+
+    nb->nl_uevent = mnl_socket_open(NETLINK_KOBJECT_UEVENT);
+    if (!nb->nl_uevent)
+        err(EXIT_FAILURE, "mnl_socket_open (NETLINK_KOBJECT_UEVENT)");
+
+    // There is one single group in kobject over netlink
+    if (mnl_socket_bind(nb->nl_uevent, (1<<0), MNL_SOCKET_AUTOPID) < 0)
+        err(EXIT_FAILURE, "mnl_socket_bind");
 
     nb->inet_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (nb->inet_fd < 0)
@@ -83,6 +94,7 @@ static void net_basic_init(struct net_basic *nb)
 static void net_basic_cleanup(struct net_basic *nb)
 {
     mnl_socket_close(nb->nl);
+    mnl_socket_close(nb->nl_uevent);
     nb->nl = NULL;
 }
 
@@ -212,11 +224,80 @@ static int net_basic_build_ifinfo(const struct nlmsghdr *nlh, void *data)
     return MNL_CB_OK;
 }
 
-static void net_basic_process(struct net_basic *nb)
+static void nl_uevent_process(struct net_basic *nb)
 {
-    char buf[MNL_SOCKET_BUFFER_SIZE];
+    int bytecount = mnl_socket_recvfrom(nb->nl_uevent, nb->nlbuf, sizeof(nb->nlbuf));
+    if (bytecount <= 0)
+        err(EXIT_FAILURE, "mnl_socket_recvfrom");
 
-    int bytecount = mnl_socket_recvfrom(nb->nl, buf, sizeof(buf));
+    // uevent messages are concatenated strings
+    enum hotplug_operation {
+        HOTPLUG_OPERATION_NONE = 0,
+        HOTPLUG_OPERATION_ADD,
+        HOTPLUG_OPERATION_MOVE,
+        HOTPLUG_OPERATION_REMOVE
+    } operation = HOTPLUG_OPERATION_NONE;
+
+    const char *str = nb->nlbuf;
+    if (strncmp(str, "add@", 4) == 0)
+        operation = HOTPLUG_OPERATION_ADD;
+    else if (strncmp(str, "move@", 5) == 0)
+        operation = HOTPLUG_OPERATION_MOVE;
+    else if (strncmp(str, "remove@", 7) == 0)
+        operation = HOTPLUG_OPERATION_REMOVE;
+    else
+        return; // Not interested in this message.
+
+    const char *str_end = str + bytecount;
+    str += strlen(str) + 1;
+
+    // Extract the fields of interest
+    const char *ifname = NULL;
+    const char *subsystem = NULL;
+    const char *ifindex = NULL;
+    for (;str < str_end; str += strlen(str) + 1) {
+        if (strncmp(str, "INTERFACE=", 10) == 0)
+            ifname = str + 10;
+        else if (strncmp(str, "SUBSYSTEM=", 10) == 0)
+            subsystem = str + 10;
+        else if (strncmp(str, "IFINDEX=", 8) == 0)
+            ifindex = str + 8;
+    }
+
+    // Check that we have the required fields that this is a
+    // "net" subsystem event. If yes, send the notification.
+    if (ifname && subsystem && ifindex && strcmp(subsystem, "net") == 0) {
+        nb->resp_index = sizeof(uint16_t); // Skip over payload size
+        nb->resp[nb->resp_index++] = 'n';
+        ei_encode_version(nb->resp, &nb->resp_index);
+
+        ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
+
+        switch (operation) {
+        case HOTPLUG_OPERATION_ADD:
+            ei_encode_atom(nb->resp, &nb->resp_index, "ifadded");
+            break;
+        case HOTPLUG_OPERATION_MOVE:
+            ei_encode_atom(nb->resp, &nb->resp_index, "ifrenamed");
+            break;
+        case HOTPLUG_OPERATION_REMOVE:
+        default: // Silence warning
+            ei_encode_atom(nb->resp, &nb->resp_index, "ifremoved");
+            break;
+        }
+
+        ei_encode_map_header(nb->resp, &nb->resp_index, 2);
+
+        encode_kv_long(nb, "index", strtol(ifindex, NULL, 0));
+        encode_kv_string(nb, "ifname", ifname);
+
+        erlcmd_send(nb->resp, nb->resp_index);
+    }
+}
+
+static void nl_route_process(struct net_basic *nb)
+{
+    int bytecount = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
     if (bytecount <= 0)
         err(EXIT_FAILURE, "mnl_socket_recvfrom");
 
@@ -229,7 +310,7 @@ static void net_basic_process(struct net_basic *nb)
 
     // Currently, the only notifications are interface changes.
     ei_encode_atom(nb->resp, &nb->resp_index, "ifchanged");
-    if (mnl_cb_run(buf, bytecount, 0, 0, net_basic_build_ifinfo, nb) <= 0)
+    if (mnl_cb_run(nb->nlbuf, bytecount, 0, 0, net_basic_build_ifinfo, nb) <= 0)
         errx(EXIT_FAILURE, "mnl_cb_run");
 
     erlcmd_send(nb->resp, nb->resp_index);
@@ -710,6 +791,9 @@ static void net_basic_request_handler(const char *req, void *cookie)
 
 int main(int argc, char *argv[])
 {
+    (void) argc;
+    (void) argv;
+
     struct net_basic nb;
     net_basic_init(&nb);
 
@@ -717,7 +801,7 @@ int main(int argc, char *argv[])
     erlcmd_init(&handler, net_basic_request_handler, &nb);
 
     for (;;) {
-        struct pollfd fdset[2];
+        struct pollfd fdset[3];
 
         fdset[0].fd = STDIN_FILENO;
         fdset[0].events = POLLIN;
@@ -727,7 +811,11 @@ int main(int argc, char *argv[])
         fdset[1].events = POLLIN;
         fdset[1].revents = 0;
 
-        int rc = poll(fdset, 2, -1);
+        fdset[2].fd = mnl_socket_get_fd(nb.nl_uevent);
+        fdset[2].events = POLLIN;
+        fdset[2].revents = 0;
+
+        int rc = poll(fdset, 3, -1);
         if (rc < 0) {
             // Retry if EINTR
             if (errno == EINTR)
@@ -739,7 +827,9 @@ int main(int argc, char *argv[])
         if (fdset[0].revents & (POLLIN | POLLHUP))
             erlcmd_process(&handler);
         if (fdset[1].revents & (POLLIN | POLLHUP))
-            net_basic_process(&nb);
+            nl_route_process(&nb);
+        if (fdset[2].revents & (POLLIN | POLLHUP))
+            nl_uevent_process(&nb);
     }
 
     net_basic_cleanup(&nb);

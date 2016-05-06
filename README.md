@@ -108,6 +108,15 @@ following example shows how to view events at the prompt:
          rx_errors: 0, rx_packets: 7802, tx_bytes: 1273557, tx_dropped: 0,
          tx_errors: 0, tx_packets: 5068}, type: :ethernet}}
 
+Events sent by `NetBasic` include:
+  * `ifadded` - an interface was hotplugged (e.g., a USB wifi dongle)
+  * `ifrenamed` - an interface was renamed (e.g., `wlan0` is now
+    `wlxc83a35ca5f10`
+  * `ifchanged - an interface changed statue (e.g., it was down, but now it's
+    up)
+  * `ifremoved` - an interface was removed (e.g., the user removed a USB wifi
+    dongle)
+
 To get the IP configuration for an interface, call `NetBasic.get_config/2`:
 
     iex> NetBasic.get_config(pid, "eth0")

@@ -62,6 +62,11 @@ struct net_basic {
     char resp[ERLCMD_BUF_SIZE];
     int resp_index;
 
+    // Async response handling
+    void (*response_callback)(struct net_basic *nb, int bytecount);
+    unsigned int response_portid;
+    int response_seq;
+
     // Holder of the most recently encounted error message if there is one.
     const char *last_error;
 };
@@ -96,6 +101,20 @@ static void net_basic_cleanup(struct net_basic *nb)
     mnl_socket_close(nb->nl);
     mnl_socket_close(nb->nl_uevent);
     nb->nl = NULL;
+}
+
+static void start_response(struct net_basic *nb)
+{
+    nb->resp_index = sizeof(uint16_t); // Space for payload size
+    nb->resp[nb->resp_index++] = 'r'; // Indicate response
+    ei_encode_version(nb->resp, &nb->resp_index);
+}
+
+static void send_response(struct net_basic *nb)
+{
+    debug("sending response: %d bytes", nb->resp_index);
+    erlcmd_send(nb->resp, nb->resp_index);
+    nb->resp_index = 0;
 }
 
 static int collect_if_attrs(const struct nlattr *attr, void *data)
@@ -295,12 +314,8 @@ static void nl_uevent_process(struct net_basic *nb)
     }
 }
 
-static void nl_route_process(struct net_basic *nb)
+static void handle_notification(struct net_basic *nb, int bytecount)
 {
-    int bytecount = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
-    if (bytecount <= 0)
-        err(EXIT_FAILURE, "mnl_socket_recvfrom");
-
     // Create the notification
     nb->resp_index = sizeof(uint16_t); // Skip over payload size
     nb->resp[nb->resp_index++] = 'n';
@@ -316,12 +331,34 @@ static void nl_route_process(struct net_basic *nb)
     erlcmd_send(nb->resp, nb->resp_index);
 }
 
+static void handle_async_response(struct net_basic *nb, int bytecount)
+{
+    nb->response_callback(nb, bytecount);
+    nb->response_callback = NULL;
+}
+
+static void nl_route_process(struct net_basic *nb)
+{
+    int bytecount = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
+    if (bytecount <= 0)
+        err(EXIT_FAILURE, "mnl_socket_recvfrom");
+
+    // Check if there's an async response on the saved sequence number and port id.
+    // If not or if the message is not expected, then it's a notification.
+    if (nb->response_callback != NULL &&
+            mnl_cb_run(nb->nlbuf, bytecount, nb->response_seq, nb->response_portid, NULL, NULL) == MNL_CB_OK)
+        handle_async_response(nb, bytecount);
+    else
+        handle_notification(nb, bytecount);
+}
+
 static void net_basic_handle_interfaces(struct net_basic *nb)
 {
     struct if_nameindex *if_ni = if_nameindex();
     if (if_ni == NULL)
         err(EXIT_FAILURE, "if_nameindex");
 
+    start_response(nb);
     for (struct if_nameindex *i = if_ni;
          ! (i->if_index == 0 && i->if_name == NULL);
          i++) {
@@ -333,6 +370,21 @@ static void net_basic_handle_interfaces(struct net_basic *nb)
     if_freenameindex(if_ni);
 
     ei_encode_empty_list(nb->resp, &nb->resp_index);
+    send_response(nb);
+}
+
+static void net_basic_handle_status_callback(struct net_basic *nb, int bytecount)
+{
+    start_response(nb);
+
+    int original_resp_index = nb->resp_index;
+    if (mnl_cb_run(nb->nlbuf, bytecount, nb->response_seq, nb->response_portid, net_basic_build_ifinfo, nb) < 0) {
+        debug("error from or mnl_cb_run?");
+        nb->resp_index = original_resp_index;
+        ei_encode_atom(nb->resp, &nb->resp_index, "error");
+    }
+
+    send_response(nb);
 }
 
 static void net_basic_handle_status(struct net_basic *nb,
@@ -359,18 +411,9 @@ static void net_basic_handle_status(struct net_basic *nb,
     if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0)
         err(EXIT_FAILURE, "mnl_socket_send");
 
-    unsigned int portid = mnl_socket_get_portid(nb->nl);
-
-    int original_resp_index = nb->resp_index;
-    ssize_t ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
-    if (ret < 0)
-        err(EXIT_FAILURE, "mnl_socket_recvfrom");
-
-    if (mnl_cb_run(nb->nlbuf, ret, seq, portid, net_basic_build_ifinfo, nb) < 0) {
-        debug("error from or mnl_cb_run?");
-        nb->resp_index = original_resp_index;
-        ei_encode_atom(nb->resp, &nb->resp_index, "error");
-    }
+    nb->response_callback = net_basic_handle_status_callback;
+    nb->response_portid = mnl_socket_get_portid(nb->nl);
+    nb->response_seq = seq;
 }
 
 static void net_basic_set_ifflags(struct net_basic *nb,
@@ -380,10 +423,13 @@ static void net_basic_set_ifflags(struct net_basic *nb,
 {
     struct ifreq ifr;
 
+    start_response(nb);
+
     strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
     if (ioctl(nb->inet_fd, SIOCGIFFLAGS, &ifr) < 0) {
         debug("SIOCGIFFLAGS error: %s", strerror(errno));
         ei_encode_atom(nb->resp, &nb->resp_index, "error");
+        send_response(nb);
         return;
     }
 
@@ -392,10 +438,12 @@ static void net_basic_set_ifflags(struct net_basic *nb,
         if (ioctl(nb->inet_fd, SIOCSIFFLAGS, &ifr)) {
             debug("SIOCGIFFLAGS error: %s", strerror(errno));
             ei_encode_atom(nb->resp, &nb->resp_index, "error");
+            send_response(nb);
             return;
         }
     }
     erlcmd_encode_ok(nb->resp, &nb->resp_index);
+    send_response(nb);
 }
 
 static int collect_route_attrs(const struct nlattr *attr, void *data)
@@ -674,6 +722,7 @@ static void net_basic_handle_get(struct net_basic *nb,
 {
     int original_resp_index = nb->resp_index;
 
+    start_response(nb);
     ei_encode_map_header(nb->resp, &nb->resp_index, HANDLER_COUNT);
 
     nb->last_error = NULL;
@@ -686,6 +735,7 @@ static void net_basic_handle_get(struct net_basic *nb,
         nb->resp_index = original_resp_index;
         erlcmd_encode_error_tuple(nb->resp, &nb->resp_index, nb->last_error);
     }
+    send_response(nb);
 }
 
 static struct ip_setting_handler *find_handler(const char *name)
@@ -703,6 +753,8 @@ static void net_basic_handle_set(struct net_basic *nb,
                                  const char *ifname)
 {
     nb->last_error = NULL;
+
+    start_response(nb);
 
     int arity;
     if (ei_decode_map_header(nb->req, &nb->req_index, &arity) < 0)
@@ -726,6 +778,8 @@ static void net_basic_handle_set(struct net_basic *nb,
         erlcmd_encode_error_tuple(nb->resp, &nb->resp_index, nb->last_error);
     else
         erlcmd_encode_ok(nb->resp, &nb->resp_index);
+
+    send_response(nb);
 }
 
 static void net_basic_request_handler(const char *req, void *cookie)
@@ -749,9 +803,6 @@ static void net_basic_request_handler(const char *req, void *cookie)
     if (ei_decode_atom(nb->req, &nb->req_index, cmd) < 0)
         errx(EXIT_FAILURE, "expecting command atom");
 
-    nb->resp_index = sizeof(uint16_t); // Space for payload size
-    nb->resp[nb->resp_index++] = 'r'; // Indicate response
-    ei_encode_version(nb->resp, &nb->resp_index);
     if (strcmp(cmd, "interfaces") == 0) {
         debug("interfaces");
         net_basic_handle_interfaces(nb);
@@ -784,9 +835,6 @@ static void net_basic_request_handler(const char *req, void *cookie)
         net_basic_handle_get(nb, ifname);
     } else
         errx(EXIT_FAILURE, "unknown command: %s", cmd);
-
-    debug("sending response: %d bytes", nb->resp_index);
-    erlcmd_send(nb->resp, nb->resp_index);
 }
 
 int main(int argc, char *argv[])

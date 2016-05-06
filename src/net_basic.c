@@ -64,11 +64,12 @@ struct net_basic {
 
     // Async response handling
     void (*response_callback)(struct net_basic *nb, int bytecount);
+    void (*response_error_callback)(struct net_basic *nb, int err);
     unsigned int response_portid;
     int response_seq;
 
-    // Holder of the most recently encounted error message if there is one.
-    const char *last_error;
+    // Holder of the most recently encounted errno.
+    int last_error;
 };
 
 static void net_basic_init(struct net_basic *nb)
@@ -191,6 +192,25 @@ static void encode_kv_stats(struct net_basic *nb, const char *key, struct nlattr
     encode_kv_ulong(nb, "collisions", stats->collisions);
 }
 
+static void encode_kv_operstate(struct net_basic *nb, int operstate)
+{
+    ei_encode_atom(nb->resp, &nb->resp_index, "operstate");
+
+    // Refer to RFC2863 for state descriptions (or the kernel docs)
+    const char *operstate_atom;
+    switch (operstate) {
+    default:
+    case IF_OPER_UNKNOWN:        operstate_atom = "unknown"; break;
+    case IF_OPER_NOTPRESENT:     operstate_atom = "notpresent"; break;
+    case IF_OPER_DOWN:           operstate_atom = "down"; break;
+    case IF_OPER_LOWERLAYERDOWN: operstate_atom = "lowerlayerdown"; break;
+    case IF_OPER_TESTING:        operstate_atom = "testing"; break;
+    case IF_OPER_DORMANT:        operstate_atom = "dormant"; break;
+    case IF_OPER_UP:             operstate_atom = "up"; break;
+    }
+    ei_encode_atom(nb->resp, &nb->resp_index, operstate_atom);
+}
+
 static int net_basic_build_ifinfo(const struct nlmsghdr *nlh, void *data)
 {
     struct net_basic *nb = (struct net_basic *) data;
@@ -236,7 +256,7 @@ static int net_basic_build_ifinfo(const struct nlmsghdr *nlh, void *data)
     if (tb[IFLA_LINK])
         encode_kv_ulong(nb, "link", mnl_attr_get_u32(tb[IFLA_LINK]));
     if (tb[IFLA_OPERSTATE])
-        encode_kv_string(nb, "operstate", mnl_attr_get_str(tb[IFLA_OPERSTATE]));
+        encode_kv_operstate(nb, mnl_attr_get_u32(tb[IFLA_OPERSTATE]));
     if (tb[IFLA_STATS])
         encode_kv_stats(nb, "stats", tb[IFLA_STATS]);
 
@@ -326,7 +346,7 @@ static void handle_notification(struct net_basic *nb, int bytecount)
     // Currently, the only notifications are interface changes.
     ei_encode_atom(nb->resp, &nb->resp_index, "ifchanged");
     if (mnl_cb_run(nb->nlbuf, bytecount, 0, 0, net_basic_build_ifinfo, nb) <= 0)
-        errx(EXIT_FAILURE, "mnl_cb_run");
+        err(EXIT_FAILURE, "mnl_cb_run");
 
     erlcmd_send(nb->resp, nb->resp_index);
 }
@@ -335,6 +355,14 @@ static void handle_async_response(struct net_basic *nb, int bytecount)
 {
     nb->response_callback(nb, bytecount);
     nb->response_callback = NULL;
+    nb->response_error_callback = NULL;
+}
+
+static void handle_async_response_error(struct net_basic *nb, int err)
+{
+    nb->response_error_callback(nb, err);
+    nb->response_callback = NULL;
+    nb->response_error_callback = NULL;
 }
 
 static void nl_route_process(struct net_basic *nb)
@@ -345,10 +373,15 @@ static void nl_route_process(struct net_basic *nb)
 
     // Check if there's an async response on the saved sequence number and port id.
     // If not or if the message is not expected, then it's a notification.
-    if (nb->response_callback != NULL &&
-            mnl_cb_run(nb->nlbuf, bytecount, nb->response_seq, nb->response_portid, NULL, NULL) == MNL_CB_OK)
-        handle_async_response(nb, bytecount);
-    else
+    if (nb->response_callback != NULL) {
+        int rc = mnl_cb_run(nb->nlbuf, bytecount, nb->response_seq, nb->response_portid, NULL, NULL);
+        if (rc == MNL_CB_OK)
+            handle_async_response(nb, bytecount);
+        else if (rc == MNL_CB_ERROR && errno != ESRCH && errno != EPROTO)
+            handle_async_response_error(nb, errno);
+        else
+            handle_notification(nb, bytecount);
+    } else
         handle_notification(nb, bytecount);
 }
 
@@ -378,12 +411,22 @@ static void net_basic_handle_status_callback(struct net_basic *nb, int bytecount
     start_response(nb);
 
     int original_resp_index = nb->resp_index;
+
+    ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
+    ei_encode_atom(nb->resp, &nb->resp_index, "ok");
     if (mnl_cb_run(nb->nlbuf, bytecount, nb->response_seq, nb->response_portid, net_basic_build_ifinfo, nb) < 0) {
         debug("error from or mnl_cb_run?");
         nb->resp_index = original_resp_index;
-        ei_encode_atom(nb->resp, &nb->resp_index, "error");
+        erlcmd_encode_errno_error(nb->resp, &nb->resp_index, errno);
     }
 
+    send_response(nb);
+}
+
+static void net_basic_handle_status_error_callback(struct net_basic *nb, int err)
+{
+    start_response(nb);
+    erlcmd_encode_errno_error(nb->resp, &nb->resp_index, err);
     send_response(nb);
 }
 
@@ -412,6 +455,7 @@ static void net_basic_handle_status(struct net_basic *nb,
         err(EXIT_FAILURE, "mnl_socket_send");
 
     nb->response_callback = net_basic_handle_status_callback;
+    nb->response_error_callback = net_basic_handle_status_error_callback;
     nb->response_portid = mnl_socket_get_portid(nb->nl);
     nb->response_seq = seq;
 }
@@ -428,7 +472,7 @@ static void net_basic_set_ifflags(struct net_basic *nb,
     strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
     if (ioctl(nb->inet_fd, SIOCGIFFLAGS, &ifr) < 0) {
         debug("SIOCGIFFLAGS error: %s", strerror(errno));
-        ei_encode_atom(nb->resp, &nb->resp_index, "error");
+        erlcmd_encode_errno_error(nb->resp, &nb->resp_index, errno);
         send_response(nb);
         return;
     }
@@ -437,7 +481,7 @@ static void net_basic_set_ifflags(struct net_basic *nb,
         ifr.ifr_flags = (ifr.ifr_flags & ~mask) | (mask & flags);
         if (ioctl(nb->inet_fd, SIOCSIFFLAGS, &ifr)) {
             debug("SIOCGIFFLAGS error: %s", strerror(errno));
-            ei_encode_atom(nb->resp, &nb->resp_index, "error");
+            erlcmd_encode_errno_error(nb->resp, &nb->resp_index, errno);
             send_response(nb);
             return;
         }
@@ -563,13 +607,13 @@ static int set_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic
     addr->sin_family = AF_INET;
     if (inet_pton(AF_INET, ipaddr, &addr->sin_addr) <= 0) {
         debug("Bad IP address for '%s': %s", handler->name, ipaddr);
-        nb->last_error = "bad_ip_address";
+        nb->last_error = EINVAL;
         return -1;
     }
 
     if (ioctl(nb->inet_fd, handler->ioctl_set, &ifr) < 0) {
         debug("ioctl(0x%04x) failed for setting '%s': %s", handler->ioctl_set, handler->name, strerror(errno));
-        nb->last_error = strerror(errno); // Think about this
+        nb->last_error = errno;
         return -1;
     }
 
@@ -584,7 +628,7 @@ static int get_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic
 
     if (ioctl(nb->inet_fd, handler->ioctl_get, &ifr) < 0) {
         debug("ioctl(0x%04x) failed for getting '%s': %s", handler->ioctl_get, handler->name, strerror(errno));
-        nb->last_error = strerror(errno); // Think about this
+        nb->last_error = errno;
         return -1;
     }
 
@@ -593,13 +637,13 @@ static int get_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic
         char addrstr[INET_ADDRSTRLEN];
         if (!inet_ntop(addr->sin_family, &addr->sin_addr, addrstr, sizeof(addrstr))) {
             debug("inet_ntop failed for '%s'? : %s", handler->name, strerror(errno));
-            nb->last_error = strerror(errno); // Think about this
+            nb->last_error = errno;
             return -1;
         }
         encode_kv_string(nb, handler->name, addrstr);
     } else {
         debug("got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
-        nb->last_error = "bad family";
+        nb->last_error = EINVAL;
         return -1;
     }
     return 0;
@@ -634,7 +678,7 @@ static int remove_all_gateways(struct net_basic *nb, const char *ifname)
             if (errno == ESRCH) {
                 return 0;
             } else {
-                nb->last_error = strerror(errno);
+                nb->last_error = errno;
                 return -1;
             }
         }
@@ -651,7 +695,7 @@ static int add_default_gateway(struct net_basic *nb, const char *ifname, const c
     addr->sin_family = AF_INET;
     if (inet_pton(AF_INET, gateway_ip, &addr->sin_addr) <= 0) {
         debug("Bad IP address for the default gateway: %s", gateway_ip);
-        nb->last_error = "bad_ip_address";
+        nb->last_error = EINVAL;
         return -1;
     }
 
@@ -671,7 +715,7 @@ static int add_default_gateway(struct net_basic *nb, const char *ifname, const c
 
     int rc = ioctl(nb->inet_fd, SIOCADDRT, &route);
     if (rc < 0 && errno != EEXIST) {
-        nb->last_error = strerror(errno);
+        nb->last_error = errno;
         return -1;
     }
     return 0;
@@ -697,7 +741,7 @@ static int ifname_to_index(struct net_basic *nb, const char *ifname)
     strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
 
     if (ioctl(nb->inet_fd, SIOCGIFINDEX, &ifr) < 0) {
-        nb->last_error = strerror(errno);
+        nb->last_error = errno;
         return -1;
     }
     return ifr.ifr_ifindex;
@@ -720,12 +764,14 @@ static int get_default_gateway(struct ip_setting_handler *handler, struct net_ba
 static void net_basic_handle_get(struct net_basic *nb,
                                  const char *ifname)
 {
+    start_response(nb);
     int original_resp_index = nb->resp_index;
 
-    start_response(nb);
+    ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
+    ei_encode_atom(nb->resp, &nb->resp_index, "ok");
     ei_encode_map_header(nb->resp, &nb->resp_index, HANDLER_COUNT);
 
-    nb->last_error = NULL;
+    nb->last_error = 0;
     struct ip_setting_handler *handler = handlers;
     while (handler->name &&
            handler->get(handler, nb, ifname) >= 0)
@@ -733,7 +779,7 @@ static void net_basic_handle_get(struct net_basic *nb,
 
     if (nb->last_error) {
         nb->resp_index = original_resp_index;
-        erlcmd_encode_error_tuple(nb->resp, &nb->resp_index, nb->last_error);
+        erlcmd_encode_errno_error(nb->resp, &nb->resp_index, nb->last_error);
     }
     send_response(nb);
 }
@@ -752,7 +798,7 @@ static struct ip_setting_handler *find_handler(const char *name)
 static void net_basic_handle_set(struct net_basic *nb,
                                  const char *ifname)
 {
-    nb->last_error = NULL;
+    nb->last_error = 0;
 
     start_response(nb);
 
@@ -761,7 +807,7 @@ static void net_basic_handle_set(struct net_basic *nb,
         errx(EXIT_FAILURE, "setting attributes requires a map");
 
     int i;
-    for (i = 0; i < arity && nb->last_error == NULL; i++) {
+    for (i = 0; i < arity && nb->last_error == 0; i++) {
         char name[32];
         if (erlcmd_decode_atom(nb->req, &nb->req_index, name, sizeof(name)) < 0)
             errx(EXIT_FAILURE, "error in map encoding");
@@ -775,7 +821,7 @@ static void net_basic_handle_set(struct net_basic *nb,
             ei_skip_term(nb->req, &nb->req_index);
     }
     if (nb->last_error)
-        erlcmd_encode_error_tuple(nb->resp, &nb->resp_index, nb->last_error);
+        erlcmd_encode_errno_error(nb->resp, &nb->resp_index, nb->last_error);
     else
         erlcmd_encode_ok(nb->resp, &nb->resp_index);
 
@@ -821,16 +867,16 @@ static void net_basic_request_handler(const char *req, void *cookie)
             errx(EXIT_FAILURE, "ifdown requires ifname");
         debug("ifdown: %s", ifname);
         net_basic_set_ifflags(nb, ifname, 0, IFF_UP);
-    } else if (strcmp(cmd, "set_config") == 0) {
+    } else if (strcmp(cmd, "configure") == 0) {
         if (ei_decode_tuple_header(nb->req, &nb->req_index, &arity) < 0 ||
                 arity != 2 ||
                 erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
-            errx(EXIT_FAILURE, "set_config requires {ifname, parameters}");
+            errx(EXIT_FAILURE, "configure requires {ifname, parameters}");
         debug("set: %s", ifname);
         net_basic_handle_set(nb, ifname);
-    } else if (strcmp(cmd, "get_config") == 0) {
+    } else if (strcmp(cmd, "get_configuration") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
-            errx(EXIT_FAILURE, "get_config requires ifname");
+            errx(EXIT_FAILURE, "get_configuration requires ifname");
         debug("get: %s", ifname);
         net_basic_handle_get(nb, ifname);
     } else

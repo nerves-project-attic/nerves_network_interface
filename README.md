@@ -9,10 +9,10 @@ networking parameters that make sense for end systems in the majority
 of home and office environments. This includes:
 
  * Enumerating available interfaces
- * Querying link-level interface status
+ * Reporting when new interfaces appear and disappear (USB WiFi dongle insertion/removal)
+ * Querying link-level interface status and statistics
  * Reporting link-level interface status changes
- * Getting link level statistics
- * Getting and setting IP addresses, subnets, gateways, etc.
+ * Configuring IP addresses, subnets, gateways, etc.
  * Bringing interfaces up and down
 
 Currently only IPv4 is supported. If you use IPv6, I'd be interested in
@@ -34,7 +34,7 @@ SUDO environment variable to `true`. I.e., `SUDO=true make`.
 To pull in as a dependency to your application, add the following line to your
 `mix.exs` deps list:
 
-     {:net_basic, github: "fhunleth/net_basic.ex"}
+     {:net_basic, github: "fhunleth/net_basic.ex", branch: "master"}
 
 ## Permissions
 
@@ -73,13 +73,13 @@ To get link-level status information and statistics on an interface, call
 `NetBasic.status/2`:
 
     iex> NetBasic.status(pid, "eth0")
-    %{ifname: 'eth0', index: 2, is_broadcast: true, is_lower_up: true,
-      is_multicast: true, is_running: true, is_up: true,
-      mac_address: <<224, 219, 85, 231, 139, 93>>,
-      mac_broadcast: <<255, 255, 255, 255, 255, 255>>, mtu: 1500, operstate: [6],
-      stats: %{collisions: 0, multicast: 7, rx_bytes: 2561254, rx_dropped: 0,
-        rx_errors: 0, rx_packets: 5301, tx_bytes: 944159, tx_dropped: 0,
-        tx_errors: 0, tx_packets: 3898}, type: :ethernet}
+    {:ok, %{ifname: 'eth0', index: 2, is_broadcast: true, is_lower_up: true,
+            is_multicast: true, is_running: true, is_up: true,
+            mac_address: <<224, 219, 85, 231, 139, 93>>,
+            mac_broadcast: <<255, 255, 255, 255, 255, 255>>, mtu: 1500, operstate: :up,
+            stats: %{collisions: 0, multicast: 7, rx_bytes: 2561254, rx_dropped: 0,
+              rx_errors: 0, rx_packets: 5301, tx_bytes: 944159, tx_dropped: 0,
+              tx_errors: 0, tx_packets: 3898}, type: :ethernet}
 
 Polling `NetBasic` for status isn't that great, so it's possible to
 register a `GenEvent` with `NetBasic`. If you don't supply one in the call
@@ -103,7 +103,7 @@ following example shows how to view events at the prompt:
      %{ifname: 'eth0', index: 2, is_broadcast: true, is_lower_up: true,
        is_multicast: true, is_running: true, is_up: true,
        mac_address: <<224, 219, 85, 231, 139, 93>>,
-       mac_broadcast: <<255, 255, 255, 255, 255, 255>>, mtu: 1500, operstate: [6],
+       mac_broadcast: <<255, 255, 255, 255, 255, 255>>, mtu: 1500, operstate: :up,
        stats: %{collisions: 0, multicast: 14, rx_bytes: 3061718, rx_dropped: 0,
          rx_errors: 0, rx_packets: 7802, tx_bytes: 1273557, tx_dropped: 0,
          tx_errors: 0, tx_packets: 5068}, type: :ethernet}}
@@ -117,25 +117,25 @@ Events sent by `NetBasic` include:
   * `ifremoved` - an interface was removed (e.g., the user removed a USB wifi
     dongle)
 
-To get the IP configuration for an interface, call `NetBasic.get_config/2`:
+To get the IP configuration for an interface, call `NetBasic.get_configuration/2`:
 
-    iex> NetBasic.get_config(pid, "eth0")
-    %{ipv4_address: '192.168.25.114', ipv4_broadcast: '192.168.25.255',
-      ipv4_gateway: '192.168.25.5', ipv4_subnet_mask: '255.255.255.0'}
+    iex> NetBasic.get_configuration(pid, "eth0")
+    {:ok, %{ipv4_address: '192.168.25.114', ipv4_broadcast: '192.168.25.255',
+            ipv4_gateway: '192.168.25.5', ipv4_subnet_mask: '255.255.255.0'}
 
 To setting IP addresses and other configuration, just call
-`NetBasic.set_config/3` using keyword parameters or a map with what you'd like
+`NetBasic.configure/3` using keyword parameters or a map with what you'd like
 to set. The following example uses keyward parameters:
 
-    iex> NetBasic.set_config(pid, "eth0", ipv4_address: "192.168.25.200",
+    iex> NetBasic.configure(pid, "eth0", ipv4_address: "192.168.25.200",
     ...> ipv4_subnet_mask: "255.255.255.0")
     :ok
 
 If you get an error, check that you are running Elixir with sufficient privilege
 to modify network interfaces or make the `net_basic` binary setuid root.
 
-Note that the library accepts both Erlang strings and Elixir strings. It,
-however, only returns Erlang strings.
+The library accepts both Erlang strings and Elixir strings. It,
+however, only returns Elixir strings.
 
 To enable or disable an interface, you can do so with `NetBasic.ifup/1` and
 `NetBasic.ifdown/1`. As you would expect, these require privilege to run:

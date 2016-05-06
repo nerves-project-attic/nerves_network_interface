@@ -80,6 +80,19 @@ defmodule NetBasic do
 
   @doc """
   Return link-level status on the specified interface.
+
+  For example, `NetBasic.status pid, "eth0"` could return:
+
+      {:ok,
+       %{ifname: "eth0", index: 2, is_broadcast: true, is_lower_up: true,
+         is_multicast: true, is_running: true, is_up: true,
+         mac_address: <<224, 219, 85, 231, 139, 93>>,
+         mac_broadcast: <<255, 255, 255, 255, 255, 255>>, mtu: 1500, operstate: :up,
+         stats: %{collisions: 0, multicast: 427, rx_bytes: 358417207, rx_dropped: 0,
+           rx_errors: 0, rx_packets: 301021, tx_bytes: 22813761, tx_dropped: 0,
+           tx_errors: 0, tx_packets: 212480}, type: :ethernet}}
+
+  If the interface doesn't exist, `{:error, :enodev}` is returned.
   """
   def status(pid, ifname) do
     GenServer.call(pid, {:status, ifname})
@@ -87,6 +100,8 @@ defmodule NetBasic do
 
   @doc """
   Bring the specified interface up.
+
+  Returns `:ok` on success or `{:error, reason}` if an error occurs.
   """
   def ifup(pid, ifname) do
     GenServer.call(pid, {:ifup, ifname})
@@ -94,16 +109,21 @@ defmodule NetBasic do
 
   @doc """
   Bring the specified interface down.
+
+  Returns `:ok` on success or `{:error, reason}` if an error occurs.
   """
   def ifdown(pid, ifname) do
     GenServer.call(pid, {:ifdown, ifname})
   end
 
   @doc """
-  Return IP configuration for the specified interface.
+  Return the IP configuration for the specified interface as a map. See
+  `configure/3` for options.
+
+  Returns `{:ok, config}` on success or `{:error, reason}` if an error occurs.
   """
-  def get_config(pid, ifname) do
-    GenServer.call(pid, {:get_config, ifname})
+  def get_configuration(pid, ifname) do
+    GenServer.call(pid, {:get_configuration, ifname})
   end
 
   @doc """
@@ -116,12 +136,14 @@ defmodule NetBasic do
     * `:ipv4_gateway` - the default gateway
 
   Options can be specified either as a keyword list or as a map.
+
+  Returns `:ok` on success or `{:error, reason}` if an error occurs.
   """
-  def set_config(pid, ifname, options) when is_list(options) do
-    set_config(pid, ifname, :maps.from_list(options))
+  def configure(pid, ifname, options) when is_list(options) do
+    configure(pid, ifname, :maps.from_list(options))
   end
-  def set_config(pid, ifname, options) when is_map(options) do
-    GenServer.call(pid, {:set_config, ifname, options})
+  def configure(pid, ifname, options) when is_map(options) do
+    GenServer.call(pid, {:configure, ifname, options})
   end
 
   def init(event_manager) do
@@ -132,30 +154,30 @@ defmodule NetBasic do
   end
 
   def handle_call(:interfaces, _from, state) do
-    {:ok, response} = call_port(state, :interfaces, [])
+    response = call_port(state, :interfaces, [])
     {:reply, response, state }
   end
   def handle_call({:status, ifname}, _from, state) do
-    {:ok, response} = call_port(state, :status, ifname)
+    response = call_port(state, :status, ifname)
     {:reply, response, state }
   end
   def handle_call(:event_manager, _from, state) do
     {:reply, state.manager, state}
   end
   def handle_call({:ifup, ifname}, _from, state) do
-    {:ok, response} = call_port(state, :ifup, ifname)
+    response = call_port(state, :ifup, ifname)
     {:reply, response, state }
   end
   def handle_call({:ifdown, ifname}, _from, state) do
-    {:ok, response} = call_port(state, :ifdown, ifname)
+    response = call_port(state, :ifdown, ifname)
     {:reply, response, state }
   end
-  def handle_call({:set_config, ifname, options}, _from, state) do
-    {:ok, response} = call_port(state, :set_config, {ifname, options})
+  def handle_call({:configure, ifname, options}, _from, state) do
+    response = call_port(state, :configure, {ifname, options})
     {:reply, response, state }
   end
-  def handle_call({:get_config, ifname}, _from, state) do
-    {:ok, response} = call_port(state, :get_config, ifname)
+  def handle_call({:get_configuration, ifname}, _from, state) do
+    response = call_port(state, :get_configuration, ifname)
     {:reply, response, state }
   end
 
@@ -179,9 +201,11 @@ defmodule NetBasic do
     send state.port, {self, {:command, :erlang.term_to_binary(msg)}}
     receive do
       {_, {:data, <<?r, response::binary>>}} ->
-        {:ok, :erlang.binary_to_term(response)}
+        :erlang.binary_to_term(response)
     after
-      1_000 -> :error
+      1_000 ->
+        # Not sure how this can be recovered
+        exit(:port_timed_out)
     end
   end
 end

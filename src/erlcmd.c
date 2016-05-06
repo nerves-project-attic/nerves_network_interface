@@ -206,4 +206,52 @@ int erlcmd_encode_error_tuple(char *buf, int *index, const char *error_atom)
         return -1;
 }
 
+/**
+ * @brief Encode {error, reason} where reason is based off an errno value
+ * @param buf where to store the atom
+ * @param index the index into buf
+ * @param err the value of errno
+ * @return 0 on success; -1 on error
+ */
+int erlcmd_encode_errno_error(char *buf, int *index, int err)
+{
+    const char *reason;
+    switch (err) {
+    case 0:       reason = "ok"; break;
+    case EPERM:   reason = "eperm"; break;
+    case ENOENT:  reason = "enoent"; break;
+    case ESRCH:   reason = "esrch"; break;
+    case EINTR:   reason = "eintr"; break;
+    case EIO:     reason = "eio"; break;
+    case ENXIO:   reason = "enxio"; break;
+    case E2BIG:   reason = "e2big"; break;
+    case ENOEXEC: reason = "enoexec"; break;
+    case EBADF:   reason = "ebadf"; break;
+    case ECHILD:  reason = "echild"; break;
+    case EAGAIN:  reason = "eagain"; break;
+    case ENOMEM:  reason = "enomem"; break;
+    case EACCES:  reason = "eacces"; break;
+    case EFAULT:  reason = "efault"; break;
+    case ENOTBLK: reason = "enotblk"; break;
+    case EBUSY:   reason = "ebusy"; break;
+    case EEXIST:  reason = "eexist"; break;
+    case EXDEV:   reason = "exdev"; break;
+    case ENODEV:  reason = "enodev"; break;
+    case ENOTDIR: reason = "enotdir"; break;
+    case EISDIR:  reason = "eisdir"; break;
+    case EINVAL:  reason = "einval"; break;
+    case ENFILE:  reason = "enfile"; break;
+    case EMFILE:  reason = "emfile"; break;
+    case ENOTTY:  reason = "enotty"; break;
+    case ETXTBSY: reason = "etxtbsy"; break;
+    case EFBIG:   reason = "efbig"; break;
+    case ENOSPC:  reason = "enospc"; break;
+    case ESPIPE:  reason = "espipe"; break;
+    case EROFS:   reason = "erofs"; break;
+    case EMLINK:  reason = "emlink"; break;
+    case EPIPE:   reason = "epipe"; break;
+    default:      reason = "unknown"; break;
+    }
+    return erlcmd_encode_error_tuple(buf, index, reason);
+}
 

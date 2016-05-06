@@ -48,5 +48,6 @@ int erlcmd_decode_atom(const char *buf, int *index, char *dest, int maxlength);
 
 int erlcmd_encode_ok(char *buf, int *index);
 int erlcmd_encode_error_tuple(char *buf, int *index, const char *error_atom);
+int erlcmd_encode_errno_error(char *buf, int *index, int err);
 
 #endif

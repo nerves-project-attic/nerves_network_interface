@@ -117,17 +117,17 @@ Events sent by `NetBasic` include:
   * `ifremoved` - an interface was removed (e.g., the user removed a USB wifi
     dongle)
 
-To get the IP configuration for an interface, call `NetBasic.get_configuration/2`:
+To get the IP configuration for an interface, call `NetBasic.settings/2`:
 
-    iex> NetBasic.get_configuration(pid, "eth0")
+    iex> NetBasic.settings(pid, "eth0")
     {:ok, %{ipv4_address: '192.168.25.114', ipv4_broadcast: '192.168.25.255',
             ipv4_gateway: '192.168.25.5', ipv4_subnet_mask: '255.255.255.0'}
 
 To setting IP addresses and other configuration, just call
-`NetBasic.configure/3` using keyword parameters or a map with what you'd like
+`NetBasic.setup/3` using keyword parameters or a map with what you'd like
 to set. The following example uses keyward parameters:
 
-    iex> NetBasic.configure(pid, "eth0", ipv4_address: "192.168.25.200",
+    iex> NetBasic.setup(pid, "eth0", ipv4_address: "192.168.25.200",
     ...> ipv4_subnet_mask: "255.255.255.0")
     :ok
 

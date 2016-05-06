@@ -867,16 +867,16 @@ static void net_basic_request_handler(const char *req, void *cookie)
             errx(EXIT_FAILURE, "ifdown requires ifname");
         debug("ifdown: %s", ifname);
         net_basic_set_ifflags(nb, ifname, 0, IFF_UP);
-    } else if (strcmp(cmd, "configure") == 0) {
+    } else if (strcmp(cmd, "setup") == 0) {
         if (ei_decode_tuple_header(nb->req, &nb->req_index, &arity) < 0 ||
                 arity != 2 ||
                 erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
-            errx(EXIT_FAILURE, "configure requires {ifname, parameters}");
+            errx(EXIT_FAILURE, "setup requires {ifname, parameters}");
         debug("set: %s", ifname);
         net_basic_handle_set(nb, ifname);
-    } else if (strcmp(cmd, "get_configuration") == 0) {
+    } else if (strcmp(cmd, "settings") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
-            errx(EXIT_FAILURE, "get_configuration requires ifname");
+            errx(EXIT_FAILURE, "settings requires ifname");
         debug("get: %s", ifname);
         net_basic_handle_get(nb, ifname);
     } else

@@ -118,12 +118,12 @@ defmodule NetBasic do
 
   @doc """
   Return the IP configuration for the specified interface as a map. See
-  `configure/3` for options.
+  `setup/3` for options.
 
   Returns `{:ok, config}` on success or `{:error, reason}` if an error occurs.
   """
-  def get_configuration(pid, ifname) do
-    GenServer.call(pid, {:get_configuration, ifname})
+  def settings(pid, ifname) do
+    GenServer.call(pid, {:settings, ifname})
   end
 
   @doc """
@@ -139,11 +139,11 @@ defmodule NetBasic do
 
   Returns `:ok` on success or `{:error, reason}` if an error occurs.
   """
-  def configure(pid, ifname, options) when is_list(options) do
-    configure(pid, ifname, :maps.from_list(options))
+  def setup(pid, ifname, options) when is_list(options) do
+    setup(pid, ifname, :maps.from_list(options))
   end
-  def configure(pid, ifname, options) when is_map(options) do
-    GenServer.call(pid, {:configure, ifname, options})
+  def setup(pid, ifname, options) when is_map(options) do
+    GenServer.call(pid, {:setup, ifname, options})
   end
 
   def init(event_manager) do
@@ -172,12 +172,12 @@ defmodule NetBasic do
     response = call_port(state, :ifdown, ifname)
     {:reply, response, state }
   end
-  def handle_call({:configure, ifname, options}, _from, state) do
-    response = call_port(state, :configure, {ifname, options})
+  def handle_call({:setup, ifname, options}, _from, state) do
+    response = call_port(state, :setup, {ifname, options})
     {:reply, response, state }
   end
-  def handle_call({:get_configuration, ifname}, _from, state) do
-    response = call_port(state, :get_configuration, ifname)
+  def handle_call({:settings, ifname}, _from, state) do
+    response = call_port(state, :settings, ifname)
     {:reply, response, state }
   end
 

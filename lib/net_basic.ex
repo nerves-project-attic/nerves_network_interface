@@ -203,7 +203,7 @@ defmodule NetBasic do
       {_, {:data, <<?r, response::binary>>}} ->
         :erlang.binary_to_term(response)
     after
-      1_000 ->
+      4_000 ->
         # Not sure how this can be recovered
         exit(:port_timed_out)
     end

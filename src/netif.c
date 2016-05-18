@@ -40,7 +40,7 @@
 #define debug(...)
 #endif
 
-struct net_basic {
+struct netif {
     // NETLINK_ROUTE socket information
     struct mnl_socket *nl;
     int seq;
@@ -63,8 +63,8 @@ struct net_basic {
     int resp_index;
 
     // Async response handling
-    void (*response_callback)(struct net_basic *nb, int bytecount);
-    void (*response_error_callback)(struct net_basic *nb, int err);
+    void (*response_callback)(struct netif *nb, int bytecount);
+    void (*response_error_callback)(struct netif *nb, int err);
     unsigned int response_portid;
     int response_seq;
 
@@ -72,7 +72,7 @@ struct net_basic {
     int last_error;
 };
 
-static void net_basic_init(struct net_basic *nb)
+static void netif_init(struct netif *nb)
 {
     memset(nb, 0, sizeof(*nb));
     nb->nl = mnl_socket_open(NETLINK_ROUTE);
@@ -97,21 +97,21 @@ static void net_basic_init(struct net_basic *nb)
     nb->seq = 1;
 }
 
-static void net_basic_cleanup(struct net_basic *nb)
+static void netif_cleanup(struct netif *nb)
 {
     mnl_socket_close(nb->nl);
     mnl_socket_close(nb->nl_uevent);
     nb->nl = NULL;
 }
 
-static void start_response(struct net_basic *nb)
+static void start_response(struct netif *nb)
 {
     nb->resp_index = sizeof(uint16_t); // Space for payload size
     nb->resp[nb->resp_index++] = 'r'; // Indicate response
     ei_encode_version(nb->resp, &nb->resp_index);
 }
 
-static void send_response(struct net_basic *nb)
+static void send_response(struct netif *nb)
 {
     debug("sending response: %d bytes", nb->resp_index);
     erlcmd_send(nb->resp, nb->resp_index);
@@ -145,18 +145,18 @@ static int collect_if_attrs(const struct nlattr *attr, void *data)
     return MNL_CB_OK;
 }
 
-static void encode_kv_long(struct net_basic *nb, const char *key, long value)
+static void encode_kv_long(struct netif *nb, const char *key, long value)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, key);
     ei_encode_long(nb->resp, &nb->resp_index, value);
 }
 
-static void encode_kv_ulong(struct net_basic *nb, const char *key, unsigned long value)
+static void encode_kv_ulong(struct netif *nb, const char *key, unsigned long value)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, key);
     ei_encode_ulong(nb->resp, &nb->resp_index, value);
 }
-static void encode_kv_bool(struct net_basic *nb, const char *key, int value)
+static void encode_kv_bool(struct netif *nb, const char *key, int value)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, key);
     ei_encode_boolean(nb->resp, &nb->resp_index, value);
@@ -168,13 +168,13 @@ static void encode_string(char *buf, int *index, const char *str)
     //       my knowledge
     ei_encode_binary(buf, index, str, strlen(str));
 }
-static void encode_kv_string(struct net_basic *nb, const char *key, const char *str)
+static void encode_kv_string(struct netif *nb, const char *key, const char *str)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, key);
     encode_string(nb->resp, &nb->resp_index, str);
 }
 
-static void encode_kv_stats(struct net_basic *nb, const char *key, struct nlattr *attr)
+static void encode_kv_stats(struct netif *nb, const char *key, struct nlattr *attr)
 {
     struct rtnl_link_stats *stats = (struct rtnl_link_stats *) mnl_attr_get_payload(attr);
 
@@ -192,7 +192,7 @@ static void encode_kv_stats(struct net_basic *nb, const char *key, struct nlattr
     encode_kv_ulong(nb, "collisions", stats->collisions);
 }
 
-static void encode_kv_operstate(struct net_basic *nb, int operstate)
+static void encode_kv_operstate(struct netif *nb, int operstate)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, "operstate");
 
@@ -211,9 +211,9 @@ static void encode_kv_operstate(struct net_basic *nb, int operstate)
     ei_encode_atom(nb->resp, &nb->resp_index, operstate_atom);
 }
 
-static int net_basic_build_ifinfo(const struct nlmsghdr *nlh, void *data)
+static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
 {
-    struct net_basic *nb = (struct net_basic *) data;
+    struct netif *nb = (struct netif *) data;
     struct nlattr *tb[IFLA_MAX + 1] = {};
     struct ifinfomsg *ifm = mnl_nlmsg_get_payload(nlh);
 
@@ -263,7 +263,7 @@ static int net_basic_build_ifinfo(const struct nlmsghdr *nlh, void *data)
     return MNL_CB_OK;
 }
 
-static void nl_uevent_process(struct net_basic *nb)
+static void nl_uevent_process(struct netif *nb)
 {
     int bytecount = mnl_socket_recvfrom(nb->nl_uevent, nb->nlbuf, sizeof(nb->nlbuf));
     if (bytecount <= 0)
@@ -334,7 +334,7 @@ static void nl_uevent_process(struct net_basic *nb)
     }
 }
 
-static void handle_notification(struct net_basic *nb, int bytecount)
+static void handle_notification(struct netif *nb, int bytecount)
 {
     // Create the notification
     nb->resp_index = sizeof(uint16_t); // Skip over payload size
@@ -345,27 +345,27 @@ static void handle_notification(struct net_basic *nb, int bytecount)
 
     // Currently, the only notifications are interface changes.
     ei_encode_atom(nb->resp, &nb->resp_index, "ifchanged");
-    if (mnl_cb_run(nb->nlbuf, bytecount, 0, 0, net_basic_build_ifinfo, nb) <= 0)
+    if (mnl_cb_run(nb->nlbuf, bytecount, 0, 0, netif_build_ifinfo, nb) <= 0)
         err(EXIT_FAILURE, "mnl_cb_run");
 
     erlcmd_send(nb->resp, nb->resp_index);
 }
 
-static void handle_async_response(struct net_basic *nb, int bytecount)
+static void handle_async_response(struct netif *nb, int bytecount)
 {
     nb->response_callback(nb, bytecount);
     nb->response_callback = NULL;
     nb->response_error_callback = NULL;
 }
 
-static void handle_async_response_error(struct net_basic *nb, int err)
+static void handle_async_response_error(struct netif *nb, int err)
 {
     nb->response_error_callback(nb, err);
     nb->response_callback = NULL;
     nb->response_error_callback = NULL;
 }
 
-static void nl_route_process(struct net_basic *nb)
+static void nl_route_process(struct netif *nb)
 {
     int bytecount = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
     if (bytecount <= 0)
@@ -385,7 +385,7 @@ static void nl_route_process(struct net_basic *nb)
         handle_notification(nb, bytecount);
 }
 
-static void net_basic_handle_interfaces(struct net_basic *nb)
+static void netif_handle_interfaces(struct netif *nb)
 {
     struct if_nameindex *if_ni = if_nameindex();
     if (if_ni == NULL)
@@ -406,7 +406,7 @@ static void net_basic_handle_interfaces(struct net_basic *nb)
     send_response(nb);
 }
 
-static void net_basic_handle_status_callback(struct net_basic *nb, int bytecount)
+static void netif_handle_status_callback(struct netif *nb, int bytecount)
 {
     start_response(nb);
 
@@ -414,7 +414,7 @@ static void net_basic_handle_status_callback(struct net_basic *nb, int bytecount
 
     ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
     ei_encode_atom(nb->resp, &nb->resp_index, "ok");
-    if (mnl_cb_run(nb->nlbuf, bytecount, nb->response_seq, nb->response_portid, net_basic_build_ifinfo, nb) < 0) {
+    if (mnl_cb_run(nb->nlbuf, bytecount, nb->response_seq, nb->response_portid, netif_build_ifinfo, nb) < 0) {
         debug("error from or mnl_cb_run?");
         nb->resp_index = original_resp_index;
         erlcmd_encode_errno_error(nb->resp, &nb->resp_index, errno);
@@ -423,14 +423,14 @@ static void net_basic_handle_status_callback(struct net_basic *nb, int bytecount
     send_response(nb);
 }
 
-static void net_basic_handle_status_error_callback(struct net_basic *nb, int err)
+static void netif_handle_status_error_callback(struct netif *nb, int err)
 {
     start_response(nb);
     erlcmd_encode_errno_error(nb->resp, &nb->resp_index, err);
     send_response(nb);
 }
 
-static void net_basic_handle_status(struct net_basic *nb,
+static void netif_handle_status(struct netif *nb,
                                     const char *ifname)
 {
     struct nlmsghdr *nlh;
@@ -454,13 +454,13 @@ static void net_basic_handle_status(struct net_basic *nb,
     if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0)
         err(EXIT_FAILURE, "mnl_socket_send");
 
-    nb->response_callback = net_basic_handle_status_callback;
-    nb->response_error_callback = net_basic_handle_status_error_callback;
+    nb->response_callback = netif_handle_status_callback;
+    nb->response_error_callback = netif_handle_status_error_callback;
     nb->response_portid = mnl_socket_get_portid(nb->nl);
     nb->response_seq = seq;
 }
 
-static void net_basic_set_ifflags(struct net_basic *nb,
+static void netif_set_ifflags(struct netif *nb,
                                   const char *ifname,
                                   uint32_t flags,
                                   uint32_t mask)
@@ -526,7 +526,7 @@ static int check_default_gateway(const struct nlmsghdr *nlh, void *data)
     return MNL_CB_OK;
 }
 
-static void find_default_gateway(struct net_basic *nb,
+static void find_default_gateway(struct netif *nb,
                                 int oif,
                                 char *result)
 {
@@ -565,18 +565,18 @@ static void find_default_gateway(struct net_basic *nb,
 
 struct ip_setting_handler {
     const char *name;
-    int (*set)(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname);
-    int (*get)(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname);
+    int (*set)(struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+    int (*get)(struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
 
     // data for handlers
     int ioctl_set;
     int ioctl_get;
 };
 
-static int set_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname);
-static int get_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname);
-static int set_default_gateway(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname);
-static int get_default_gateway(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname);
+static int set_ipaddr_ioctl(struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+static int get_ipaddr_ioctl(struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+static int set_default_gateway(struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+static int get_default_gateway(struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
 
 static struct ip_setting_handler handlers[] = {
     { "ipv4_address", set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFADDR, SIOCGIFADDR },
@@ -588,7 +588,7 @@ static struct ip_setting_handler handlers[] = {
 
 #define HANDLER_COUNT ((sizeof(handlers) / sizeof(handlers[0])) - 1)
 
-static int set_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname)
+static int set_ipaddr_ioctl(struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
 {
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
@@ -620,7 +620,7 @@ static int set_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic
     return 0;
 }
 
-static int get_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname)
+static int get_ipaddr_ioctl(struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
 {
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
@@ -649,7 +649,7 @@ static int get_ipaddr_ioctl(struct ip_setting_handler *handler, struct net_basic
     return 0;
 }
 
-static int remove_all_gateways(struct net_basic *nb, const char *ifname)
+static int remove_all_gateways(struct netif *nb, const char *ifname)
 {
     struct rtentry route;
     memset(&route, 0, sizeof(route));
@@ -685,7 +685,7 @@ static int remove_all_gateways(struct net_basic *nb, const char *ifname)
     }
 }
 
-static int add_default_gateway(struct net_basic *nb, const char *ifname, const char *gateway_ip)
+static int add_default_gateway(struct netif *nb, const char *ifname, const char *gateway_ip)
 {
     struct rtentry route;
     memset(&route, 0, sizeof(route));
@@ -721,7 +721,7 @@ static int add_default_gateway(struct net_basic *nb, const char *ifname, const c
     return 0;
 }
 
-static int set_default_gateway(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname)
+static int set_default_gateway(struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
 {
     char gateway[INET_ADDRSTRLEN];
     if (erlcmd_decode_string(nb->req, &nb->req_index, gateway, INET_ADDRSTRLEN) < 0)
@@ -734,7 +734,7 @@ static int set_default_gateway(struct ip_setting_handler *handler, struct net_ba
     return add_default_gateway(nb, ifname, gateway);
 }
 
-static int ifname_to_index(struct net_basic *nb, const char *ifname)
+static int ifname_to_index(struct netif *nb, const char *ifname)
 {
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
@@ -747,7 +747,7 @@ static int ifname_to_index(struct net_basic *nb, const char *ifname)
     return ifr.ifr_ifindex;
 }
 
-static int get_default_gateway(struct ip_setting_handler *handler, struct net_basic *nb, const char *ifname)
+static int get_default_gateway(struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
 {
     int oif = ifname_to_index(nb, ifname);
     if (oif < 0)
@@ -761,7 +761,7 @@ static int get_default_gateway(struct ip_setting_handler *handler, struct net_ba
     return 0;
 }
 
-static void net_basic_handle_get(struct net_basic *nb,
+static void netif_handle_get(struct netif *nb,
                                  const char *ifname)
 {
     start_response(nb);
@@ -795,7 +795,7 @@ static struct ip_setting_handler *find_handler(const char *name)
     return NULL;
 }
 
-static void net_basic_handle_set(struct net_basic *nb,
+static void netif_handle_set(struct netif *nb,
                                  const char *ifname)
 {
     nb->last_error = 0;
@@ -828,9 +828,9 @@ static void net_basic_handle_set(struct net_basic *nb,
     send_response(nb);
 }
 
-static void net_basic_request_handler(const char *req, void *cookie)
+static void netif_request_handler(const char *req, void *cookie)
 {
-    struct net_basic *nb = (struct net_basic *) cookie;
+    struct netif *nb = (struct netif *) cookie;
     char ifname[IFNAMSIZ];
 
     // Commands are of the form {Command, Arguments}:
@@ -851,34 +851,34 @@ static void net_basic_request_handler(const char *req, void *cookie)
 
     if (strcmp(cmd, "interfaces") == 0) {
         debug("interfaces");
-        net_basic_handle_interfaces(nb);
+        netif_handle_interfaces(nb);
     } else if (strcmp(cmd, "status") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "status requires ifname");
         debug("ifinfo: %s", ifname);
-        net_basic_handle_status(nb, ifname);
+        netif_handle_status(nb, ifname);
     } else if (strcmp(cmd, "ifup") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "ifup requires ifname");
         debug("ifup: %s", ifname);
-        net_basic_set_ifflags(nb, ifname, IFF_UP, IFF_UP);
+        netif_set_ifflags(nb, ifname, IFF_UP, IFF_UP);
     } else if (strcmp(cmd, "ifdown") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "ifdown requires ifname");
         debug("ifdown: %s", ifname);
-        net_basic_set_ifflags(nb, ifname, 0, IFF_UP);
+        netif_set_ifflags(nb, ifname, 0, IFF_UP);
     } else if (strcmp(cmd, "setup") == 0) {
         if (ei_decode_tuple_header(nb->req, &nb->req_index, &arity) < 0 ||
                 arity != 2 ||
                 erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "setup requires {ifname, parameters}");
         debug("set: %s", ifname);
-        net_basic_handle_set(nb, ifname);
+        netif_handle_set(nb, ifname);
     } else if (strcmp(cmd, "settings") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "settings requires ifname");
         debug("get: %s", ifname);
-        net_basic_handle_get(nb, ifname);
+        netif_handle_get(nb, ifname);
     } else
         errx(EXIT_FAILURE, "unknown command: %s", cmd);
 }
@@ -888,11 +888,11 @@ int main(int argc, char *argv[])
     (void) argc;
     (void) argv;
 
-    struct net_basic nb;
-    net_basic_init(&nb);
+    struct netif nb;
+    netif_init(&nb);
 
     struct erlcmd handler;
-    erlcmd_init(&handler, net_basic_request_handler, &nb);
+    erlcmd_init(&handler, netif_request_handler, &nb);
 
     for (;;) {
         struct pollfd fdset[3];
@@ -926,6 +926,6 @@ int main(int argc, char *argv[])
             nl_uevent_process(&nb);
     }
 
-    net_basic_cleanup(&nb);
+    netif_cleanup(&nb);
     return 0;
 }

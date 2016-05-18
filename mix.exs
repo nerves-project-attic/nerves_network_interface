@@ -1,4 +1,4 @@
-defmodule Mix.Tasks.Compile.NetBasic do
+defmodule Mix.Tasks.Compile.NervesNetworkInterface do
   @shortdoc "Compiles the port binary"
   def run(_) do
     {result, error_code} = System.cmd("make", ["all"], stderr_to_stdout: true)
@@ -17,7 +17,7 @@ defmodule NetBasic.Mixfile do
     [app: :net_basic,
      version: "0.2.0",
      elixir: ">= 1.0.0 and < 2.0.0",
-     compilers: Mix.compilers ++ [:NetBasic],
+     compilers: Mix.compilers ++ [:NervesNetworkInterface],
      deps: deps,
      docs: [extras: ["README.md"]],
      package: package,
@@ -42,7 +42,7 @@ defmodule NetBasic.Mixfile do
     %{files: ["lib", "src/*.[ch]", "test", "mix.exs", "README.md", "LICENSE", "Makefile"],
       maintainers: ["Frank Hunleth"],
       licenses: ["Apache-2.0"],
-      links: %{"GitHub" => "https://github.com/fhunleth/net_basic.ex"}}
+      links: %{"GitHub" => "https://github.com/fhunleth/nerves_networkinterface"}}
   end
 
   defp deps do

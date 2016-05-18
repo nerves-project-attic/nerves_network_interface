@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-defmodule NetBasic do
+defmodule Nerves.NetworkInterface do
   use GenServer
   require Logger
 
@@ -30,7 +30,7 @@ defmodule NetBasic do
 
   ## Privilege
 
-  The functions that return information don't require that the `NetBasic`'s
+  The functions that return information don't require that the `Nerves.NetworkInterface`'s
   associated port process has privileged access to the system. If you
   need to change any parameters or bring up or down an interface, you should
   ensure that the port process is running as a privileged user.
@@ -41,7 +41,7 @@ defmodule NetBasic do
             requests: []
 
   @doc """
-  Start and link a NetBasic process. A GenEvent will be spawned for managing
+  Start and link a Nerves.NetworkInterface process. A GenEvent will be spawned for managing
   link layer events. Call Event_manager/1 to get the GenEvent pid.
   """
   def start_link() do
@@ -50,7 +50,7 @@ defmodule NetBasic do
   end
 
   @doc """
-  Start and link a NetBasic process. Use the specified GenEvent for sending
+  Start and link a Nerves.NetworkInterface process. Use the specified GenEvent for sending
   all network link events.
   """
   def start_link(event_manager, opts \\ []) do
@@ -81,7 +81,7 @@ defmodule NetBasic do
   @doc """
   Return link-level status on the specified interface.
 
-  For example, `NetBasic.status pid, "eth0"` could return:
+  For example, `Nerves.NetworkInterface.status pid, "eth0"` could return:
 
       {:ok,
        %{ifname: "eth0", index: 2, is_broadcast: true, is_lower_up: true,
@@ -147,10 +147,10 @@ defmodule NetBasic do
   end
 
   def init(event_manager) do
-    executable = :code.priv_dir(:net_basic) ++ '/net_basic'
+    executable = :code.priv_dir(:nerves_networkinterface) ++ '/netif'
     port = Port.open({:spawn_executable, executable},
     [{:packet, 2}, :use_stdio, :binary])
-    { :ok, %NetBasic{port: port, manager: event_manager} }
+    { :ok, %Nerves.NetworkInterface{port: port, manager: event_manager} }
   end
 
   def handle_call(:interfaces, _from, state) do

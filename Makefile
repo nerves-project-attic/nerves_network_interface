@@ -8,7 +8,6 @@
 # ERL_EI_LIBDIR path to libei.a
 # LDFLAGS       linker flags for linking all binaries
 # ERL_LDFLAGS   additional linker flags for projects referencing Erlang libraries
-# MIX           path to mix
 # SUDO_ASKPASS  path to ssh-askpass when modifying ownership of net_basic
 # SUDO          path to SUDO. If you don't want the privileged parts to run, set to "true"
 
@@ -25,7 +24,6 @@ LDFLAGS += -lmnl
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter
 CFLAGS += -std=c99
 CC ?= $(CROSSCOMPILE)gcc
-MIX ?= mix
 
 # If not cross-compiling, then run sudo by default
 ifeq ($(origin CROSSCOMPILE), undefined)
@@ -38,20 +36,16 @@ endif
 
 .PHONY: all clean
 
-all: priv/net_basic
+all: priv/netif
 
 %.o: %.c
 	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) -o $@ $<
 
-priv/net_basic: src/erlcmd.o src/net_basic.o
+priv/netif: src/erlcmd.o src/netif.o
 	@mkdir -p priv
 	$(CC) $^ $(ERL_LDFLAGS) $(LDFLAGS) -o $@
 	# setuid root net_basic so that it can configure network interfaces
 	SUDO_ASKPASS=$(SUDO_ASKPASS) $(SUDO) -- sh -c 'chown root:root $@; chmod +s $@'
 
 clean:
-	$(MIX) clean
-	rm -f priv/net_basic src/*.o
-
-realclean:
-	rm -fr _build priv/net_basic src/*.o
+	rm -f priv/netif src/*.o

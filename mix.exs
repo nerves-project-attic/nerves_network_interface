@@ -10,11 +10,11 @@ defmodule Mix.Tasks.Compile.NervesNetworkInterface do
   end
 end
 
-defmodule NetBasic.Mixfile do
+defmodule Nerves.NetworkInterface.Mixfile do
   use Mix.Project
 
   def project do
-    [app: :net_basic,
+    [app: :nerves_networkinterface,
      version: "0.2.0",
      elixir: ">= 1.0.0 and < 2.0.0",
      compilers: Mix.compilers ++ [:NervesNetworkInterface],
@@ -29,7 +29,8 @@ defmodule NetBasic.Mixfile do
   #
   # Type `mix help compile.app` for more information
   def application do
-    [applications: [:logger]]
+    [applications: [:logger],
+     mod: {Nerves.NetworkInterface, []}]
   end
 
   defp description do

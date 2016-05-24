@@ -21,8 +21,8 @@ ERL_EI_LIBDIR ?= $(ERL_PATH)/usr/lib
 ERL_LDFLAGS ?= -L$(ERL_EI_LIBDIR) -lei
 
 LDFLAGS += -lmnl
-CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter
-CFLAGS += -std=c99
+CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter -pedantic
+CFLAGS += -std=c99 -D_XOPEN_SOURCE=600
 CC ?= $(CROSSCOMPILE)gcc
 
 # If not cross-compiling, then run sudo by default

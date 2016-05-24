@@ -214,7 +214,8 @@ static void encode_kv_operstate(struct netif *nb, int operstate)
 static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
 {
     struct netif *nb = (struct netif *) data;
-    struct nlattr *tb[IFLA_MAX + 1] = {};
+    struct nlattr *tb[IFLA_MAX + 1];
+    memset(tb, 0, sizeof(tb));
     struct ifinfomsg *ifm = mnl_nlmsg_get_payload(nlh);
 
     if (mnl_attr_parse(nlh, sizeof(*ifm), collect_if_attrs, tb) != MNL_CB_OK) {
@@ -510,7 +511,8 @@ struct fdg_data {
 
 static int check_default_gateway(const struct nlmsghdr *nlh, void *data)
 {
-    struct nlattr *tb[RTA_MAX + 1] = {};
+    struct nlattr *tb[RTA_MAX + 1];
+    memset(tb, 0, sizeof(tb));
     struct rtmsg *rm = mnl_nlmsg_get_payload(nlh);
     mnl_attr_parse(nlh, sizeof(*rm), collect_route_attrs, tb);
 
@@ -565,35 +567,36 @@ static void find_default_gateway(struct netif *nb,
 
 struct ip_setting_handler {
     const char *name;
-    int (*set)(struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
-    int (*get)(struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+    int (*prep)(const struct ip_setting_handler *handler, struct netif *nb, void **context);
+    int (*set)(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
+    int (*get)(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
 
     // data for handlers
     int ioctl_set;
     int ioctl_get;
 };
 
-static int set_ipaddr_ioctl(struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
-static int get_ipaddr_ioctl(struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
-static int set_default_gateway(struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
-static int get_default_gateway(struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+static int prep_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context);
+static int set_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
+static int get_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+static int prep_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, void **context);
+static int set_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
+static int get_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
 
-static struct ip_setting_handler handlers[] = {
-    { "ipv4_address", set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFADDR, SIOCGIFADDR },
-    { "ipv4_broadcast", set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFBRDADDR, SIOCGIFBRDADDR },
-    { "ipv4_subnet_mask", set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFNETMASK, SIOCGIFNETMASK },
-    { "ipv4_gateway", set_default_gateway, get_default_gateway, 0, 0 },
-    { NULL, NULL, NULL, 0, 0 }
+// These handlers are listed in the order that they should be invoked when
+// configuring the interface. For example, "ipv4_gateway" is listed at the end
+// so that it is set after the address and subnet_mask. If this is not done,
+// setting the gateway may fail since Linux thinks that it is on the wrong subnet.
+static const struct ip_setting_handler handlers[] = {
+    { "ipv4_address", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFADDR, SIOCGIFADDR },
+    { "ipv4_subnet_mask", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFNETMASK, SIOCGIFNETMASK },
+    { "ipv4_broadcast", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFBRDADDR, SIOCGIFBRDADDR },
+    { "ipv4_gateway", prep_default_gateway, set_default_gateway, get_default_gateway, 0, 0 }
 };
+#define HANDLER_COUNT (sizeof(handlers) / sizeof(handlers[0]))
 
-#define HANDLER_COUNT ((sizeof(handlers) / sizeof(handlers[0])) - 1)
-
-static int set_ipaddr_ioctl(struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
+static int prep_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context)
 {
-    struct ifreq ifr;
-    memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
-
     char ipaddr[INET_ADDRSTRLEN];
     if (erlcmd_decode_string(nb->req, &nb->req_index, ipaddr, INET_ADDRSTRLEN) < 0)
         errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
@@ -601,7 +604,20 @@ static int set_ipaddr_ioctl(struct ip_setting_handler *handler, struct netif *nb
     // Be forgiving and if the user specifies an empty IP address, just skip
     // this request.
     if (ipaddr[0] == '\0')
-        return 0;
+        *context = NULL;
+    else
+        *context = strdup(ipaddr);
+
+    return 0;
+}
+
+static int set_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
+{
+    const char *ipaddr = (const char *) context;
+
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
 
     struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
     addr->sin_family = AF_INET;
@@ -620,7 +636,7 @@ static int set_ipaddr_ioctl(struct ip_setting_handler *handler, struct netif *nb
     return 0;
 }
 
-static int get_ipaddr_ioctl(struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
+static int get_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
 {
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
@@ -721,15 +737,28 @@ static int add_default_gateway(struct netif *nb, const char *ifname, const char 
     return 0;
 }
 
-static int set_default_gateway(struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
+static int prep_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, void **context)
 {
     char gateway[INET_ADDRSTRLEN];
     if (erlcmd_decode_string(nb->req, &nb->req_index, gateway, INET_ADDRSTRLEN) < 0)
         errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
 
+    *context = strdup(gateway);
+    return 0;
+}
+
+static int set_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
+{
+    (void) handler;
+    const char *gateway = context;
+
     // Before one can be set, any configured gateways need to be removed.
     if (remove_all_gateways(nb, ifname) < 0)
         return -1;
+
+    // If no gateway was specified, then we're done.
+    if (*gateway == '\0')
+        return 0;
 
     return add_default_gateway(nb, ifname, gateway);
 }
@@ -747,7 +776,7 @@ static int ifname_to_index(struct netif *nb, const char *ifname)
     return ifr.ifr_ifindex;
 }
 
-static int get_default_gateway(struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
+static int get_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
 {
     int oif = ifname_to_index(nb, ifname);
     if (oif < 0)
@@ -772,10 +801,11 @@ static void netif_handle_get(struct netif *nb,
     ei_encode_map_header(nb->resp, &nb->resp_index, HANDLER_COUNT);
 
     nb->last_error = 0;
-    struct ip_setting_handler *handler = handlers;
-    while (handler->name &&
-           handler->get(handler, nb, ifname) >= 0)
-        handler++;
+    for (size_t i = 0; i < HANDLER_COUNT; i++) {
+        const struct ip_setting_handler *handler = &handlers[i];
+        if (handler->get(handler, nb, ifname) < 0)
+            break;
+    }
 
     if (nb->last_error) {
         nb->resp_index = original_resp_index;
@@ -784,19 +814,18 @@ static void netif_handle_get(struct netif *nb,
     send_response(nb);
 }
 
-static struct ip_setting_handler *find_handler(const char *name)
+static const struct ip_setting_handler *find_handler(const char *name)
 {
-    struct ip_setting_handler *handler = handlers;
-    while (handler->name) {
+    for (size_t i = 0; i < HANDLER_COUNT; i++) {
+        const struct ip_setting_handler *handler = &handlers[i];
         if (strcmp(handler->name, name) == 0)
             return handler;
-        handler++;
     }
     return NULL;
 }
 
 static void netif_handle_set(struct netif *nb,
-                                 const char *ifname)
+                             const char *ifname)
 {
     nb->last_error = 0;
 
@@ -806,20 +835,36 @@ static void netif_handle_set(struct netif *nb,
     if (ei_decode_map_header(nb->req, &nb->req_index, &arity) < 0)
         errx(EXIT_FAILURE, "setting attributes requires a map");
 
-    int i;
-    for (i = 0; i < arity && nb->last_error == 0; i++) {
+    void *handler_context[HANDLER_COUNT];
+    memset(handler_context, 0, sizeof(handler_context));
+
+    // Parse all options
+    for (int i = 0; i < arity && nb->last_error == 0; i++) {
         char name[32];
         if (erlcmd_decode_atom(nb->req, &nb->req_index, name, sizeof(name)) < 0)
             errx(EXIT_FAILURE, "error in map encoding");
 
         // Look up the option. If we don't know it, silently ignore it so that
         // the caller can pass in maps that contain options for other code.
-        struct ip_setting_handler *handler = find_handler(name);
+        const struct ip_setting_handler *handler = find_handler(name);
         if (handler)
-            handler->set(handler, nb, ifname);
+            handler->prep(handler, nb, &handler_context[handler - handlers]);
         else
             ei_skip_term(nb->req, &nb->req_index);
     }
+
+    // If no errors, then set everything
+    if (!nb->last_error) {
+        // Order is important: see note on handlers
+        for (size_t i = 0; i < HANDLER_COUNT; i++) {
+            if (handler_context[i]) {
+                handlers[i].set(&handlers[i], nb, ifname, handler_context[i]);
+                free(handler_context[i]);
+            }
+        }
+    }
+
+    // Encode and send the response
     if (nb->last_error)
         erlcmd_encode_errno_error(nb->resp, &nb->resp_index, nb->last_error);
     else

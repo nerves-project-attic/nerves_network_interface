@@ -14,8 +14,8 @@ defmodule Nerves.NetworkInterface.Mixfile do
   use Mix.Project
 
   def project do
-    [app: :nerves_networkinterface,
-     version: "0.2.0",
+    [app: :nerves_network_interface,
+     version: "0.3.0",
      elixir: ">= 1.0.0 and < 2.0.0",
      compilers: Mix.compilers ++ [:NervesNetworkInterface],
      deps: deps,
@@ -35,15 +35,15 @@ defmodule Nerves.NetworkInterface.Mixfile do
 
   defp description do
     """
-    Elixir interface to basic networking events and link-level and IP management.
+    Discover, setup, and get stats on network interfaces.
     """
   end
 
   defp package do
-    %{files: ["lib", "src/*.[ch]", "test", "mix.exs", "README.md", "LICENSE", "Makefile"],
+    %{files: ["lib", "src/*.[ch]", "test", "mix.exs", "README.md", "LICENSE", "CHANGELOG.md", "Makefile"],
       maintainers: ["Frank Hunleth"],
       licenses: ["Apache-2.0"],
-      links: %{"GitHub" => "https://github.com/fhunleth/nerves_networkinterface"}}
+      links: %{"GitHub" => "https://github.com/nerves-project/nerves_network_interface"}}
   end
 
   defp deps do

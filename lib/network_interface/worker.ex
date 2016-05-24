@@ -61,7 +61,7 @@ defmodule Nerves.NetworkInterface.Worker do
   end
 
   def init(event_manager) do
-    executable = :code.priv_dir(:nerves_networkinterface) ++ '/netif'
+    executable = :code.priv_dir(:nerves_network_interface) ++ '/netif'
     port = Port.open({:spawn_executable, executable},
     [{:packet, 2}, :use_stdio, :binary])
     { :ok, %Nerves.NetworkInterface.Worker{port: port, manager: event_manager} }

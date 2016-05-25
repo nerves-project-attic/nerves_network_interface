@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.1
+
+  * Bugs fixed
+    * Fixes from integration with nerves_interim_wifi
+
 ## v0.3.0
 
 Renamed from `net_basic.ex` to `nerves_network_interface`

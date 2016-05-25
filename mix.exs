@@ -15,7 +15,7 @@ defmodule Nerves.NetworkInterface.Mixfile do
 
   def project do
     [app: :nerves_network_interface,
-     version: "0.3.0",
+     version: "0.3.1",
      elixir: ">= 1.0.0 and < 2.0.0",
      compilers: Mix.compilers ++ [:NervesNetworkInterface],
      deps: deps,

@@ -40,7 +40,7 @@ If [available in Hex](https://hex.pm/docs/publish), the package can be installed
   1. Add `nerves_network_interface` to your list of dependencies in `mix.exs`:
 
         def deps do
-          [{:nerves_network_interface, "~> 0.3.0"}]
+          [{:nerves_network_interface, "~> 0.3.1"}]
         end
 
   2. List `:nerves_network_interface` as an application dependency:

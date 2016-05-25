@@ -8,7 +8,7 @@
 # ERL_EI_LIBDIR path to libei.a
 # LDFLAGS       linker flags for linking all binaries
 # ERL_LDFLAGS   additional linker flags for projects referencing Erlang libraries
-# SUDO_ASKPASS  path to ssh-askpass when modifying ownership of net_basic
+# SUDO_ASKPASS  path to ssh-askpass when modifying ownership of netif
 # SUDO          path to SUDO. If you don't want the privileged parts to run, set to "true"
 
 # Note: If crosscompiling, either ERL_PATH or both ERL_CFLAGS and ERL_LDFLAGS need

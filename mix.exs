@@ -19,7 +19,8 @@ defmodule Nerves.NetworkInterface.Mixfile do
      elixir: ">= 1.0.0 and < 2.0.0",
      compilers: Mix.compilers ++ [:NervesNetworkInterface],
      deps: deps,
-     docs: [extras: ["README.md"]],
+     docs: [extras: ["README.md"],
+            main: "readme"],
      package: package,
      description: description
     ]

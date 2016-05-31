@@ -16,6 +16,8 @@ defmodule Nerves.NetworkInterface.Worker do
   use GenServer
   require Logger
 
+  @moduledoc false
+
   defstruct port: nil,
             manager: nil,
             requests: []

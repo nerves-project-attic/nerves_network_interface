@@ -22,8 +22,17 @@ ERL_LDFLAGS ?= -L$(ERL_EI_LIBDIR) -lei
 
 LDFLAGS += -lmnl
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter -pedantic
-CFLAGS += -std=c99 -D_XOPEN_SOURCE=600
+
 CC ?= $(CROSSCOMPILE)gcc
+
+# Unfortunately, depending on the system we're on, we need
+# to specify -std=c99 or -std=gnu99. The later is more correct,
+# but it fails to build on many setups.
+ifeq ($(shell CC=$(CC) src/test-c99.sh),yes)
+CFLAGS += -std=c99 -D_XOPEN_SOURCE=600
+else
+CFLAGS += -std=gnu99
+endif
 
 # If not cross-compiling, then run sudo by default
 ifeq ($(origin CROSSCOMPILE), undefined)

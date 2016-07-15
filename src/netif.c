@@ -31,6 +31,13 @@
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 
+// In Ubuntu 16.04, it seems that the new compat logic handling is preventing
+// IFF_LOWER_UP from being defined properly. It looks like a bug, so define it
+// here so that this file compiles.  A scan of all Nerves platforms and Ubuntu
+// 16.04 has IFF_LOWER_UP always being set to 0x10000. this being defined as
+// 0x10000.
+#define WORKAROUND_IFF_LOWER_UP (0x10000)
+
 #include "erlcmd.h"
 
 //#define DEBUG
@@ -239,7 +246,7 @@ static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
     encode_kv_bool(nb, "is_up", ifm->ifi_flags & IFF_UP);
     encode_kv_bool(nb, "is_broadcast", ifm->ifi_flags & IFF_BROADCAST);
     encode_kv_bool(nb, "is_running", ifm->ifi_flags & IFF_RUNNING);
-    encode_kv_bool(nb, "is_lower_up", ifm->ifi_flags & IFF_LOWER_UP);
+    encode_kv_bool(nb, "is_lower_up", ifm->ifi_flags & WORKAROUND_IFF_LOWER_UP);
     encode_kv_bool(nb, "is_multicast", ifm->ifi_flags & IFF_MULTICAST);
 
     if (tb[IFLA_MTU])

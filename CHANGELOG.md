@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.2
+
+  * Bugs fixed
+    * Fix compilation error on Ubuntu 16.04
+
 ## v0.3.1
 
   * Bugs fixed

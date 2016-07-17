@@ -32,7 +32,7 @@ defmodule Nerves.NetworkInterface.Mixfile do
   end
 
   defp package do
-    %{files: ["lib", "src/*.[ch]", "test", "mix.exs", "README.md", "LICENSE", "CHANGELOG.md", "Makefile"],
+    %{files: ["lib", "src/*.[ch]", "src/test-c99.sh", "test", "mix.exs", "README.md", "LICENSE", "CHANGELOG.md", "Makefile"],
       maintainers: ["Frank Hunleth"],
       licenses: ["Apache-2.0"],
       links: %{"GitHub" => "https://github.com/nerves-project/nerves_network_interface"}}

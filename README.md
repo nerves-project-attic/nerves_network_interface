@@ -18,6 +18,17 @@ industrial environments. This includes:
 Currently only IPv4 is supported. If you use IPv6, I'd be interested in
 working with you to integrate IPv6 support.
 
+## Nerves.NetworkInterface or [Nerves.Networking](https://github.com/nerves-project/nerves_networking)?
+
+The purpose of Nerves.NetworkInterface is to handles low level access to Linux
+network interfaces. The Nerves.Networking module currently also takes care of
+the low level stuff, and also of IP address assignment. The low level
+functionality in Nerves.Networking should be removed in favor of
+Nerves.NetworkInterface. The
+[Nerves.InterimWifi](https://github.com/nerves-project/nerves_interim_wifi)
+project does already make use of the functionality offered by
+Nerves.NetworkInterface.
+
 ## Prerequisites
 
 This module requires [libmnl](http://netfilter.org/projects/libmnl/) to build.

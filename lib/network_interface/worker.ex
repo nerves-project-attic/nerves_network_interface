@@ -104,7 +104,7 @@ defmodule Nerves.NetworkInterface.Worker do
   def handle_info({_, {:data, <<?n, message::binary>>}}, state) do
     {notif, data} = :erlang.binary_to_term(message)
     Logger.info "nerves_network_interface received #{inspect notif} and #{inspect data}"
-    GenEvent.notify(state.manager, {:nerves_network_interface, self, notif, data})
+    GenEvent.notify(state.manager, {:nerves_network_interface, self(), notif, data})
     {:noreply, state}
   end
   def handle_info({_, {:exit_status, _}}, state) do
@@ -114,7 +114,7 @@ defmodule Nerves.NetworkInterface.Worker do
   # Private helper functions
   defp call_port(state, command, arguments) do
     msg = {command, arguments}
-    send state.port, {self, {:command, :erlang.term_to_binary(msg)}}
+    send state.port, {self(), {:command, :erlang.term_to_binary(msg)}}
     receive do
       {_, {:data, <<?r, response::binary>>}} ->
         :erlang.binary_to_term(response)

@@ -107,25 +107,16 @@ To get link-level status information and statistics on an interface, call
               tx_errors: 0, tx_packets: 3898}, type: :ethernet}
 
 Polling `Nerves.NetworkInterface` for status isn't that great, so it's possible to
-register a `GenEvent` with `Nerves.NetworkInterface`.
-
-*This will change in the future. GenEvent use will be removed.*
+register to the `Nerves.NetworkInterface` Registry.
 
 The following example shows how to view events at the prompt:
 
-    iex> defmodule Forwarder do
-    ...>  use GenEvent
-    ...>  def handle_event(event, parent) do
-    ...>    send parent, event
-    ...>    {:ok, parent}
-    ...>  end
-    ...> end
-    iex> Nerves.NetworkInterface.event_manager |> GenEvent.add_handler(Forwarder, self())
-    :ok
-    iex> flush
+    iex> Registry.register(Nerves.NetworkInterface, "eth0", [])
+    {:ok, #PID<0.106.0>}
+    iex> flush()
     :ok
     # Plug Ethernet cable in
-    iex> flush
+    iex> flush()
     {:nerves_network_interface, #PID<0.62.0>, :ifchanged,
      %{ifname: 'eth0', index: 2, is_broadcast: true, is_lower_up: true,
        is_multicast: true, is_running: true, is_up: true,

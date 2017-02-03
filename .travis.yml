@@ -1,10 +1,10 @@
 language: erlang
 
 otp_release:
-    - 18.3
+    - 19.2
 
 env:
-    - ELIXIR_VERSION=1.2.4
+    - ELIXIR_VERSION=1.4.1
 
 before_install:
     - sudo apt-get update -qq

@@ -117,7 +117,7 @@ The following example shows how to view events at the prompt:
     :ok
     # Plug Ethernet cable in
     iex> flush()
-    {:nerves_network_interface, #PID<0.62.0>, :ifchanged,
+    {Nerves.NetworkInterface, :ifchanged,
      %{ifname: 'eth0', index: 2, is_broadcast: true, is_lower_up: true,
        is_multicast: true, is_running: true, is_up: true,
        mac_address: <<224, 219, 85, 231, 139, 93>>,

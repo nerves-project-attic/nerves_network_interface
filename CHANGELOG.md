@@ -2,6 +2,9 @@
 
 ## v0.4.0-dev
 
+* Enhancements
+  * Replaced GenEvent with Registry
+
 ## v0.3.2
 
   * Bugs fixed

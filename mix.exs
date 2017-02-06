@@ -3,7 +3,7 @@ defmodule Nerves.NetworkInterface.Mixfile do
 
   def project do
     [app: :nerves_network_interface,
-     version: "0.3.3",
+     version: "0.4.0-dev",
      elixir: "~> 1.4",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,

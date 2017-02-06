@@ -19,16 +19,10 @@ defmodule Nerves.NetworkInterface.Worker do
   @moduledoc false
 
   defstruct port: nil,
-            manager: nil,
             requests: []
 
   def start_link() do
-    { :ok, manager } = GenEvent.start_link
-    GenServer.start_link(__MODULE__, manager, name: __MODULE__)
-  end
-
-  def event_manager() do
-    GenServer.call(__MODULE__, :event_manager)
+    GenServer.start_link(__MODULE__, [], name: __MODULE__)
   end
 
   def stop() do
@@ -62,11 +56,14 @@ defmodule Nerves.NetworkInterface.Worker do
     GenServer.call(__MODULE__, {:setup, ifname, options})
   end
 
-  def init(event_manager) do
+  def init([]) do
+    Logger.info "Start Network Interface Worker"
+    {:ok, _} = Registry.start_link(:duplicate, Nerves.NetworkInterface)
+    |> IO.inspect
     executable = :code.priv_dir(:nerves_network_interface) ++ '/netif'
     port = Port.open({:spawn_executable, executable},
     [{:packet, 2}, :use_stdio, :binary])
-    { :ok, %Nerves.NetworkInterface.Worker{port: port, manager: event_manager} }
+    { :ok, %Nerves.NetworkInterface.Worker{port: port} }
   end
 
   def handle_call(:interfaces, _from, state) do
@@ -76,9 +73,6 @@ defmodule Nerves.NetworkInterface.Worker do
   def handle_call({:status, ifname}, _from, state) do
     response = call_port(state, :status, ifname)
     {:reply, response, state }
-  end
-  def handle_call(:event_manager, _from, state) do
-    {:reply, state.manager, state}
   end
   def handle_call({:ifup, ifname}, _from, state) do
     response = call_port(state, :ifup, ifname)
@@ -104,7 +98,11 @@ defmodule Nerves.NetworkInterface.Worker do
   def handle_info({_, {:data, <<?n, message::binary>>}}, state) do
     {notif, data} = :erlang.binary_to_term(message)
     Logger.info "nerves_network_interface received #{inspect notif} and #{inspect data}"
-    GenEvent.notify(state.manager, {:nerves_network_interface, self(), notif, data})
+    Registry.dispatch(Nerves.NetworkInterface, data.ifname, fn entries ->
+      for {pid, _} <- entries do
+        send(pid, {Nerves.NetworkInterface, notif, data})
+      end
+    end)
     {:noreply, state}
   end
   def handle_info({_, {:exit_status, _}}, state) do

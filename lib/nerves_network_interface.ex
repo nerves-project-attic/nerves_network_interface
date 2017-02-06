@@ -25,7 +25,7 @@ defmodule Nerves.NetworkInterface do
   `start_link/0` call. Once running, the module provides functions to
   list network interfaces, modify their state (up or down), get statistics
   and set IP networking parameters. Network events, such as when an Ethernet
-  cable is connected, are reported via a `GenEvent`.
+  cable is connected, are reported via a Registry Nerves.NetworkInterface.
 
   ## Privilege
 
@@ -36,8 +36,7 @@ defmodule Nerves.NetworkInterface do
   """
 
   @doc """
-  Start and link a Nerves.NetworkInterface process. A GenEvent will be spawned for managing
-  link layer events. Call Event_manager/1 to get the GenEvent pid.
+  Start and link a Nerves.NetworkInterface process.
   """
   def start(_type, _args) do
     import Supervisor.Spec, warn: false
@@ -51,11 +50,6 @@ defmodule Nerves.NetworkInterface do
     opts = [strategy: :rest_for_one, name: Nerves.NervesInterface.Supervisor]
     Supervisor.start_link(children, opts)
   end
-
-  @doc """
-  Return the GenEvent pid that is being used for sending events.
-  """
-  defdelegate event_manager, to: Nerves.NetworkInterface.Worker
 
   @doc """
   Return the list of network interfaces on this machine.

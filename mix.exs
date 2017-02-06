@@ -4,7 +4,7 @@ defmodule Nerves.NetworkInterface.Mixfile do
   def project do
     [app: :nerves_network_interface,
      version: "0.4.0-dev",
-     elixir: ">= 1.0.0 and < 2.0.0",
+     elixir: "~> 1.4",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,
      compilers: [:elixir_make] ++ Mix.compilers,
@@ -39,11 +39,7 @@ defmodule Nerves.NetworkInterface.Mixfile do
   end
 
   defp deps do
-    [
-      {:elixir_make, "~> 0.3"},
-      {:earmark, "~> 0.1", only: :dev},
-      {:ex_doc, "~> 0.11", only: :dev},
-      {:credo, "~> 0.3", only: [:dev, :test]}
-    ]
+    [{:elixir_make, "~> 0.3", runtime: false},
+     {:ex_doc, "~> 0.11", only: :dev}]
   end
 end

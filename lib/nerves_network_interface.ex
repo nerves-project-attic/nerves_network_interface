@@ -13,7 +13,6 @@
 # limitations under the License.
 
 defmodule Nerves.NetworkInterface do
-  use Application
 
   @moduledoc """
   This module exposes a simplified view of Linux network configuration to
@@ -34,22 +33,6 @@ defmodule Nerves.NetworkInterface do
   need to change any parameters or bring up or down an interface, you should
   ensure that the port process is running as a privileged user.
   """
-
-  @doc """
-  Start and link a Nerves.NetworkInterface process.
-  """
-  def start(_type, _args) do
-    import Supervisor.Spec, warn: false
-
-    children = [
-      worker(Nerves.NetworkInterface.Worker, [])
-    ]
-
-    # See http://elixir-lang.org/docs/stable/elixir/Supervisor.html
-    # for other strategies and supported options
-    opts = [strategy: :rest_for_one, name: Nerves.NervesInterface.Supervisor]
-    Supervisor.start_link(children, opts)
-  end
 
   @doc """
   Return the list of network interfaces on this machine.

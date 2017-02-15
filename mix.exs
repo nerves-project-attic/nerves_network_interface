@@ -21,8 +21,8 @@ defmodule Nerves.NetworkInterface.Mixfile do
   #
   # Type `mix help compile.app` for more information
   def application do
-    [applications: [:logger],
-     mod: {Nerves.NetworkInterface, []}]
+    [extra_applications: [:logger],
+     mod: {Nerves.NetworkInterface.Application, []}]
   end
 
   defp description do

@@ -58,8 +58,6 @@ defmodule Nerves.NetworkInterface.Worker do
 
   def init([]) do
     Logger.info "Start Network Interface Worker"
-    {:ok, _} = Registry.start_link(:duplicate, Nerves.NetworkInterface)
-    |> IO.inspect
     executable = :code.priv_dir(:nerves_network_interface) ++ '/netif'
     port = Port.open({:spawn_executable, executable},
     [{:packet, 2}, :use_stdio, :binary])

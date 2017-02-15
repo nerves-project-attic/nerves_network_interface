@@ -7,7 +7,7 @@ defmodule Nerves.NetworkInterface.Application do
     import Supervisor.Spec, warn: false
 
     children = [
-      worker(Registry, [:duplicate, Nerves.NetworkInterface], restart: :transient),
+      supervisor(Registry, [:duplicate, Nerves.NetworkInterface]),
       worker(Nerves.NetworkInterface.Worker, []),
     ]
 

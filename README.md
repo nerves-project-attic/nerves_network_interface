@@ -54,13 +54,7 @@ If [available in Hex](https://hex.pm/docs/publish), the package can be installed
           [{:nerves_network_interface, "~> 0.3.2"}]
         end
 
-  2. List `:nerves_network_interface` as an application dependency:
-
-        def application do
-          [applications: [:nerves_network_interface]]
-        end
-
-  3. Run `mix deps.get` and `mix compile`
+  2. Run `mix deps.get` and `mix compile`
 
 ## Permissions
 

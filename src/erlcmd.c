@@ -250,6 +250,7 @@ int erlcmd_encode_errno_error(char *buf, int *index, int err)
     case EROFS:   reason = "erofs"; break;
     case EMLINK:  reason = "emlink"; break;
     case EPIPE:   reason = "epipe"; break;
+    case EADDRNOTAVAIL: reason = "eaddrnotavail"; break;
     default:      reason = "unknown"; break;
     }
     return erlcmd_encode_error_tuple(buf, index, reason);

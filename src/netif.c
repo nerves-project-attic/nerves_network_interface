@@ -38,6 +38,8 @@
 // 0x10000.
 #define WORKAROUND_IFF_LOWER_UP (0x10000)
 
+#define MACADDR_STR_LEN      18 // aa:bb:cc:dd:ee:ff and a null terminator
+
 #include "erlcmd.h"
 
 //#define DEBUG
@@ -583,6 +585,9 @@ struct ip_setting_handler {
     int ioctl_get;
 };
 
+static int prep_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context);
+static int set_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
+static int get_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
 static int prep_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context);
 static int set_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
 static int get_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
@@ -598,9 +603,84 @@ static const struct ip_setting_handler handlers[] = {
     { "ipv4_address", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFADDR, SIOCGIFADDR },
     { "ipv4_subnet_mask", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFNETMASK, SIOCGIFNETMASK },
     { "ipv4_broadcast", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFBRDADDR, SIOCGIFBRDADDR },
-    { "ipv4_gateway", prep_default_gateway, set_default_gateway, get_default_gateway, 0, 0 }
+    { "ipv4_gateway", prep_default_gateway, set_default_gateway, get_default_gateway, 0, 0 },
+    { "mac_address", prep_mac_address_ioctl, set_mac_address_ioctl, get_mac_address_ioctl, SIOCSIFHWADDR, SIOCGIFHWADDR },
 };
 #define HANDLER_COUNT (sizeof(handlers) / sizeof(handlers[0]))
+
+static int prep_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context)
+{
+    char macaddr[MACADDR_STR_LEN];
+    if (erlcmd_decode_string(nb->req, &nb->req_index, macaddr, sizeof(macaddr)) < 0)
+        errx(EXIT_FAILURE, "mac address parameter required for '%s'", handler->name);
+
+    // Be forgiving and if the user specifies an empty IP address, just skip
+    // this request.
+    if (macaddr[0] == '\0')
+        *context = NULL;
+    else
+        *context = strdup(macaddr);
+
+    return 0;
+}
+
+static int set_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
+{
+    const char *macaddr = (const char *) context;
+
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+    struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
+    addr->sin_family = AF_UNIX;
+    unsigned char *mac = (unsigned char *) &ifr.ifr_hwaddr.sa_data;
+    if (sscanf(macaddr,
+               "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
+               &mac[0], &mac[1], &mac[2],
+               &mac[3], &mac[4], &mac[5]) != 6) {
+        debug("Bad MAC address for '%s': %s", handler->name, macaddr);
+        nb->last_error = EINVAL;
+        return -1;
+    }
+
+    if (ioctl(nb->inet_fd, handler->ioctl_set, &ifr) < 0) {
+        debug("ioctl(0x%04x) failed for setting '%s': %s", handler->ioctl_set, handler->name, strerror(errno));
+        nb->last_error = errno;
+        return -1;
+    }
+
+    return 0;
+}
+
+static int get_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
+{
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+    if (ioctl(nb->inet_fd, handler->ioctl_get, &ifr) < 0) {
+        debug("ioctl(0x%04x) failed for getting '%s': %s", handler->ioctl_get, handler->name, strerror(errno));
+        nb->last_error = errno;
+        return -1;
+    }
+
+    struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
+    if (addr->sin_family == AF_UNIX) {
+        char macaddr[MACADDR_STR_LEN];
+        unsigned char *mac = (unsigned char *) &ifr.ifr_hwaddr.sa_data;
+        snprintf(macaddr, sizeof(macaddr),
+                 "%02x:%02x:%02x:%02x:%02x:%02x",
+                 mac[0], mac[1], mac[2],
+                 mac[3], mac[4], mac[5]);
+        encode_kv_string(nb, handler->name, macaddr);
+    } else {
+        debug("got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
+        nb->last_error = EINVAL;
+        return -1;
+    }
+    return 0;
+}
 
 static int prep_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context)
 {
@@ -650,9 +730,9 @@ static int get_ipaddr_ioctl(const struct ip_setting_handler *handler, struct net
     strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
 
     if (ioctl(nb->inet_fd, handler->ioctl_get, &ifr) < 0) {
-        debug("ioctl(0x%04x) failed for getting '%s': %s", handler->ioctl_get, handler->name, strerror(errno));
-        nb->last_error = errno;
-        return -1;
+        debug("ioctl(0x%04x) failed for getting '%s': %s. Skipping...", handler->ioctl_get, handler->name, strerror(errno));
+        encode_kv_string(nb, handler->name, "");
+        return 0;
     }
 
     struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;

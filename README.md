@@ -138,8 +138,9 @@ Events sent by `Nerves.NetworkInterface` include:
 To get the IP configuration for an interface, call `Nerves.NetworkInterface.settings/1`:
 
     iex> Nerves.NetworkInterface.settings "eth0"
-    {:ok, %{ipv4_address: '192.168.25.114', ipv4_broadcast: '192.168.25.255',
-            ipv4_gateway: '192.168.25.5', ipv4_subnet_mask: '255.255.255.0'}
+    {:ok, %{ipv4_address: "192.168.25.114", ipv4_broadcast: "192.168.25.255",
+            ipv4_gateway: "192.168.25.5", ipv4_subnet_mask: "255.255.255.0",
+            mac_address: "e0:db:55:e7:8b:51"}
 
 To setting IP addresses and other configuration, just call
 `Nerves.NetworkInterface.setup/2` using keyword parameters or a map with what you'd like

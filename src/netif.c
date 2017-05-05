@@ -154,6 +154,26 @@ static int collect_if_attrs(const struct nlattr *attr, void *data)
     return MNL_CB_OK;
 }
 
+
+static int string_to_macaddr(const char *str, unsigned char *mac)
+{
+    if (sscanf(str,
+               "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
+               &mac[0], &mac[1], &mac[2],
+               &mac[3], &mac[4], &mac[5]) != 6)
+        return -1;
+    else
+        return 0;
+}
+static int macaddr_to_string(const unsigned char *mac, char *str)
+{
+    snprintf(str, MACADDR_STR_LEN,
+             "%02x:%02x:%02x:%02x:%02x:%02x",
+             mac[0], mac[1], mac[2],
+             mac[3], mac[4], mac[5]);
+    return 0;
+}
+
 static void encode_kv_long(struct netif *nb, const char *key, long value)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, key);
@@ -181,6 +201,18 @@ static void encode_kv_string(struct netif *nb, const char *key, const char *str)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, key);
     encode_string(nb->resp, &nb->resp_index, str);
+}
+
+static void encode_kv_macaddr(struct netif *nb, const char *key, const unsigned char *macaddr)
+{
+    ei_encode_atom(nb->resp, &nb->resp_index, key);
+
+    char macaddr_str[MACADDR_STR_LEN];
+
+    // Only handle 6 byte mac addresses (to my knowledge, this is the only case)
+    macaddr_to_string(macaddr, macaddr_str);
+
+    encode_string(nb->resp, &nb->resp_index, macaddr_str);
 }
 
 static void encode_kv_stats(struct netif *nb, const char *key, struct nlattr *attr)
@@ -255,14 +287,10 @@ static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
         encode_kv_ulong(nb, "mtu", mnl_attr_get_u32(tb[IFLA_MTU]));
     if (tb[IFLA_IFNAME])
         encode_kv_string(nb, "ifname", mnl_attr_get_str(tb[IFLA_IFNAME]));
-    if (tb[IFLA_ADDRESS]) {
-        ei_encode_atom(nb->resp, &nb->resp_index, "mac_address");
-        ei_encode_binary(nb->resp, &nb->resp_index, mnl_attr_get_payload(tb[IFLA_ADDRESS]), mnl_attr_get_payload_len(tb[IFLA_ADDRESS]));
-    }
-    if (tb[IFLA_BROADCAST]) {
-        ei_encode_atom(nb->resp, &nb->resp_index, "mac_broadcast");
-        ei_encode_binary(nb->resp, &nb->resp_index, mnl_attr_get_payload(tb[IFLA_BROADCAST]), mnl_attr_get_payload_len(tb[IFLA_BROADCAST]));
-    }
+    if (tb[IFLA_ADDRESS])
+        encode_kv_macaddr(nb, "mac_address", mnl_attr_get_payload(tb[IFLA_ADDRESS]));
+    if (tb[IFLA_BROADCAST])
+        encode_kv_macaddr(nb, "mac_broadcast", mnl_attr_get_payload(tb[IFLA_BROADCAST]));
     if (tb[IFLA_LINK])
         encode_kv_ulong(nb, "link", mnl_attr_get_u32(tb[IFLA_LINK]));
     if (tb[IFLA_OPERSTATE])
@@ -610,23 +638,24 @@ static const struct ip_setting_handler handlers[] = {
 
 static int prep_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context)
 {
-    char macaddr[MACADDR_STR_LEN];
-    if (erlcmd_decode_string(nb->req, &nb->req_index, macaddr, sizeof(macaddr)) < 0)
+    char macaddr_str[MACADDR_STR_LEN];
+    if (erlcmd_decode_string(nb->req, &nb->req_index, macaddr_str, sizeof(macaddr_str)) < 0)
         errx(EXIT_FAILURE, "mac address parameter required for '%s'", handler->name);
 
     // Be forgiving and if the user specifies an empty IP address, just skip
     // this request.
-    if (macaddr[0] == '\0')
+    if (macaddr_str[0] == '\0')
         *context = NULL;
     else
-        *context = strdup(macaddr);
+        *context = strdup(macaddr_str);
 
     return 0;
 }
 
+
 static int set_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
 {
-    const char *macaddr = (const char *) context;
+    const char *macaddr_str = (const char *) context;
 
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
@@ -635,11 +664,8 @@ static int set_mac_address_ioctl(const struct ip_setting_handler *handler, struc
     struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
     addr->sin_family = AF_UNIX;
     unsigned char *mac = (unsigned char *) &ifr.ifr_hwaddr.sa_data;
-    if (sscanf(macaddr,
-               "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
-               &mac[0], &mac[1], &mac[2],
-               &mac[3], &mac[4], &mac[5]) != 6) {
-        debug("Bad MAC address for '%s': %s", handler->name, macaddr);
+    if (string_to_macaddr(macaddr_str, mac) < 0) {
+        debug("Bad MAC address for '%s': %s", handler->name, macaddr_str);
         nb->last_error = EINVAL;
         return -1;
     }
@@ -667,13 +693,7 @@ static int get_mac_address_ioctl(const struct ip_setting_handler *handler, struc
 
     struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
     if (addr->sin_family == AF_UNIX) {
-        char macaddr[MACADDR_STR_LEN];
-        unsigned char *mac = (unsigned char *) &ifr.ifr_hwaddr.sa_data;
-        snprintf(macaddr, sizeof(macaddr),
-                 "%02x:%02x:%02x:%02x:%02x:%02x",
-                 mac[0], mac[1], mac[2],
-                 mac[3], mac[4], mac[5]);
-        encode_kv_string(nb, handler->name, macaddr);
+        encode_kv_macaddr(nb, handler->name, (unsigned char *) &ifr.ifr_hwaddr.sa_data);
     } else {
         debug("got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
         nb->last_error = EINVAL;

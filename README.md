@@ -54,13 +54,7 @@ If [available in Hex](https://hex.pm/docs/publish), the package can be installed
           [{:nerves_network_interface, "~> 0.3.2"}]
         end
 
-  2. List `:nerves_network_interface` as an application dependency:
-
-        def application do
-          [applications: [:nerves_network_interface]]
-        end
-
-  3. Run `mix deps.get` and `mix compile`
+  2. Run `mix deps.get` and `mix compile`
 
 ## Permissions
 
@@ -92,16 +86,16 @@ The `Nerves.NetworkInterface` application will start automatically.
 To see which interfaces are available, call `Nerves.NetworkInterface.interfaces\0`:
 
     iex> Nerves.NetworkInterface.interfaces
-	['lo', 'eth0', 'wlan0']
+    ["lo", "eth0", "wlan0"]
 
 To get link-level status information and statistics on an interface, call
 `Nerves.NetworkInterface.status/1`:
 
     iex> Nerves.NetworkInterface.status "eth0"
-    {:ok, %{ifname: 'eth0', index: 2, is_broadcast: true, is_lower_up: true,
+    {:ok, %{ifname: "eth0", index: 2, is_broadcast: true, is_lower_up: true,
             is_multicast: true, is_running: true, is_up: true,
-            mac_address: <<224, 219, 85, 231, 139, 93>>,
-            mac_broadcast: <<255, 255, 255, 255, 255, 255>>, mtu: 1500, operstate: :up,
+            mac_address: "e0:db:55:e7:8b:53",
+            mac_broadcast: "ff:ff:ff:ff:ff:ff", mtu: 1500, operstate: :up,
             stats: %{collisions: 0, multicast: 7, rx_bytes: 2561254, rx_dropped: 0,
               rx_errors: 0, rx_packets: 5301, tx_bytes: 944159, tx_dropped: 0,
               tx_errors: 0, tx_packets: 3898}, type: :ethernet}
@@ -118,10 +112,10 @@ The following example shows how to view events at the prompt:
     # Plug Ethernet cable in
     iex> flush()
     {Nerves.NetworkInterface, :ifchanged,
-     %{ifname: 'eth0', index: 2, is_broadcast: true, is_lower_up: true,
+     %{ifname: "eth0", index: 2, is_broadcast: true, is_lower_up: true,
        is_multicast: true, is_running: true, is_up: true,
-       mac_address: <<224, 219, 85, 231, 139, 93>>,
-       mac_broadcast: <<255, 255, 255, 255, 255, 255>>, mtu: 1500, operstate: :up,
+       mac_address: "e0:db:55:e7:8b:53",
+       mac_broadcast: "ff:ff:ff:ff:ff:ff", mtu: 1500, operstate: :up,
        stats: %{collisions: 0, multicast: 14, rx_bytes: 3061718, rx_dropped: 0,
          rx_errors: 0, rx_packets: 7802, tx_bytes: 1273557, tx_dropped: 0,
          tx_errors: 0, tx_packets: 5068}, type: :ethernet}}
@@ -138,8 +132,9 @@ Events sent by `Nerves.NetworkInterface` include:
 To get the IP configuration for an interface, call `Nerves.NetworkInterface.settings/1`:
 
     iex> Nerves.NetworkInterface.settings "eth0"
-    {:ok, %{ipv4_address: '192.168.25.114', ipv4_broadcast: '192.168.25.255',
-            ipv4_gateway: '192.168.25.5', ipv4_subnet_mask: '255.255.255.0'}
+    {:ok, %{ipv4_address: "192.168.25.114", ipv4_broadcast: "192.168.25.255",
+            ipv4_gateway: "192.168.25.5", ipv4_subnet_mask: "255.255.255.0",
+            mac_address: "e0:db:55:e7:8b:51"}
 
 To setting IP addresses and other configuration, just call
 `Nerves.NetworkInterface.setup/2` using keyword parameters or a map with what you'd like

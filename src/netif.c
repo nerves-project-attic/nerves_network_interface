@@ -1,4 +1,5 @@
 /*
+ *  Copyright 2017 Frank Hunleth
  *  Copyright 2014 LKC Technologies, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +15,10 @@
  * limitations under the License.
  */
 
+#include "netif.h"
+#include "netif_settings.h"
+#include "util.h"
+
 #include <err.h>
 #include <poll.h>
 #include <stdio.h>
@@ -23,10 +28,8 @@
 #include <unistd.h>
 
 #include <arpa/inet.h>
-#include <libmnl/libmnl.h>
 #include <net/if_arp.h>
 #include <net/if.h>
-#include <net/route.h>
 #include <linux/if.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
@@ -34,52 +37,8 @@
 // In Ubuntu 16.04, it seems that the new compat logic handling is preventing
 // IFF_LOWER_UP from being defined properly. It looks like a bug, so define it
 // here so that this file compiles.  A scan of all Nerves platforms and Ubuntu
-// 16.04 has IFF_LOWER_UP always being set to 0x10000. this being defined as
-// 0x10000.
+// 16.04 has IFF_LOWER_UP always being set to 0x10000.
 #define WORKAROUND_IFF_LOWER_UP (0x10000)
-
-#define MACADDR_STR_LEN      18 // aa:bb:cc:dd:ee:ff and a null terminator
-
-#include "erlcmd.h"
-
-//#define DEBUG
-#ifdef DEBUG
-#define debug(...) do { fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\r\n"); } while(0)
-#else
-#define debug(...)
-#endif
-
-struct netif {
-    // NETLINK_ROUTE socket information
-    struct mnl_socket *nl;
-    int seq;
-
-    // NETLINK_KOBJECT_UEVENT socket information
-    struct mnl_socket *nl_uevent;
-
-    // AF_INET socket for ioctls
-    int inet_fd;
-
-    // Netlink buffering
-    char nlbuf[8192]; // See MNL_SOCKET_BUFFER_SIZE
-
-    // Erlang request processing
-    const char *req;
-    int req_index;
-
-    // Erlang response processing
-    char resp[ERLCMD_BUF_SIZE];
-    int resp_index;
-
-    // Async response handling
-    void (*response_callback)(struct netif *nb, int bytecount);
-    void (*response_error_callback)(struct netif *nb, int err);
-    unsigned int response_portid;
-    int response_seq;
-
-    // Holder of the most recently encounted errno.
-    int last_error;
-};
 
 static void netif_init(struct netif *nb)
 {
@@ -152,67 +111,6 @@ static int collect_if_attrs(const struct nlattr *attr, void *data)
         break;
     }
     return MNL_CB_OK;
-}
-
-
-static int string_to_macaddr(const char *str, unsigned char *mac)
-{
-    if (sscanf(str,
-               "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
-               &mac[0], &mac[1], &mac[2],
-               &mac[3], &mac[4], &mac[5]) != 6)
-        return -1;
-    else
-        return 0;
-}
-static int macaddr_to_string(const unsigned char *mac, char *str)
-{
-    snprintf(str, MACADDR_STR_LEN,
-             "%02x:%02x:%02x:%02x:%02x:%02x",
-             mac[0], mac[1], mac[2],
-             mac[3], mac[4], mac[5]);
-    return 0;
-}
-
-static void encode_kv_long(struct netif *nb, const char *key, long value)
-{
-    ei_encode_atom(nb->resp, &nb->resp_index, key);
-    ei_encode_long(nb->resp, &nb->resp_index, value);
-}
-
-static void encode_kv_ulong(struct netif *nb, const char *key, unsigned long value)
-{
-    ei_encode_atom(nb->resp, &nb->resp_index, key);
-    ei_encode_ulong(nb->resp, &nb->resp_index, value);
-}
-static void encode_kv_bool(struct netif *nb, const char *key, int value)
-{
-    ei_encode_atom(nb->resp, &nb->resp_index, key);
-    ei_encode_boolean(nb->resp, &nb->resp_index, value);
-}
-static void encode_string(char *buf, int *index, const char *str)
-{
-    // Encode strings as binaries so that we get Elixir strings
-    // NOTE: the strings that we encounter here are expected to be ASCII to
-    //       my knowledge
-    ei_encode_binary(buf, index, str, strlen(str));
-}
-static void encode_kv_string(struct netif *nb, const char *key, const char *str)
-{
-    ei_encode_atom(nb->resp, &nb->resp_index, key);
-    encode_string(nb->resp, &nb->resp_index, str);
-}
-
-static void encode_kv_macaddr(struct netif *nb, const char *key, const unsigned char *macaddr)
-{
-    ei_encode_atom(nb->resp, &nb->resp_index, key);
-
-    char macaddr_str[MACADDR_STR_LEN];
-
-    // Only handle 6 byte mac addresses (to my knowledge, this is the only case)
-    macaddr_to_string(macaddr, macaddr_str);
-
-    encode_string(nb->resp, &nb->resp_index, macaddr_str);
 }
 
 static void encode_kv_stats(struct netif *nb, const char *key, struct nlattr *attr)
@@ -528,374 +426,6 @@ static void netif_set_ifflags(struct netif *nb,
     send_response(nb);
 }
 
-static int collect_route_attrs(const struct nlattr *attr, void *data)
-{
-    const struct nlattr **tb = data;
-    int type = mnl_attr_get_type(attr);
-
-    // Skip unsupported attributes in user-space
-    if (mnl_attr_type_valid(attr, RTA_MAX) < 0)
-        return MNL_CB_OK;
-
-    tb[type] = attr;
-    return MNL_CB_OK;
-}
-
-struct fdg_data {
-    int oif;
-    char *result;
-};
-
-static int check_default_gateway(const struct nlmsghdr *nlh, void *data)
-{
-    struct nlattr *tb[RTA_MAX + 1];
-    memset(tb, 0, sizeof(tb));
-    struct rtmsg *rm = mnl_nlmsg_get_payload(nlh);
-    mnl_attr_parse(nlh, sizeof(*rm), collect_route_attrs, tb);
-
-    struct fdg_data *fdg = (struct fdg_data *) data;
-    if (rm->rtm_scope == 0 &&
-            tb[RTA_OIF] &&
-            (int) mnl_attr_get_u32(tb[RTA_OIF]) == fdg->oif &&
-            tb[RTA_GATEWAY]) {
-        // Found it.
-        inet_ntop(AF_INET, mnl_attr_get_payload(tb[RTA_GATEWAY]), fdg->result, INET_ADDRSTRLEN);
-    }
-
-    return MNL_CB_OK;
-}
-
-static void find_default_gateway(struct netif *nb,
-                                int oif,
-                                char *result)
-{
-    struct nlmsghdr *nlh;
-    struct rtmsg *rtm;
-    unsigned int seq;
-
-    nlh = mnl_nlmsg_put_header(nb->nlbuf);
-    nlh->nlmsg_type = RTM_GETROUTE;
-    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
-    nlh->nlmsg_seq = seq = nb->seq++;
-
-    rtm = mnl_nlmsg_put_extra_header(nlh, sizeof(struct rtmsg));
-    rtm->rtm_family = AF_INET;
-
-    if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0)
-        err(EXIT_FAILURE, "mnl_socket_send");
-
-    unsigned int portid = mnl_socket_get_portid(nb->nl);
-
-    struct fdg_data fdg;
-    fdg.oif = oif;
-    fdg.result = result;
-    *fdg.result = '\0';
-
-    ssize_t ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
-    while (ret > 0) {
-        ret = mnl_cb_run(nb->nlbuf, ret, seq, portid, check_default_gateway, &fdg);
-        if (ret <= MNL_CB_STOP)
-            break;
-        ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
-    }
-    if (ret == -1)
-        err(EXIT_FAILURE, "mnl_socket_recvfrom");
-}
-
-struct ip_setting_handler {
-    const char *name;
-    int (*prep)(const struct ip_setting_handler *handler, struct netif *nb, void **context);
-    int (*set)(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
-    int (*get)(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
-
-    // data for handlers
-    int ioctl_set;
-    int ioctl_get;
-};
-
-static int prep_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context);
-static int set_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
-static int get_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
-static int prep_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context);
-static int set_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
-static int get_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
-static int prep_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, void **context);
-static int set_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
-static int get_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
-
-// These handlers are listed in the order that they should be invoked when
-// configuring the interface. For example, "ipv4_gateway" is listed at the end
-// so that it is set after the address and subnet_mask. If this is not done,
-// setting the gateway may fail since Linux thinks that it is on the wrong subnet.
-static const struct ip_setting_handler handlers[] = {
-    { "ipv4_address", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFADDR, SIOCGIFADDR },
-    { "ipv4_subnet_mask", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFNETMASK, SIOCGIFNETMASK },
-    { "ipv4_broadcast", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFBRDADDR, SIOCGIFBRDADDR },
-    { "ipv4_gateway", prep_default_gateway, set_default_gateway, get_default_gateway, 0, 0 },
-    { "mac_address", prep_mac_address_ioctl, set_mac_address_ioctl, get_mac_address_ioctl, SIOCSIFHWADDR, SIOCGIFHWADDR },
-};
-#define HANDLER_COUNT (sizeof(handlers) / sizeof(handlers[0]))
-
-static int prep_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context)
-{
-    char macaddr_str[MACADDR_STR_LEN];
-    if (erlcmd_decode_string(nb->req, &nb->req_index, macaddr_str, sizeof(macaddr_str)) < 0)
-        errx(EXIT_FAILURE, "mac address parameter required for '%s'", handler->name);
-
-    // Be forgiving and if the user specifies an empty IP address, just skip
-    // this request.
-    if (macaddr_str[0] == '\0')
-        *context = NULL;
-    else
-        *context = strdup(macaddr_str);
-
-    return 0;
-}
-
-
-static int set_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
-{
-    const char *macaddr_str = (const char *) context;
-
-    struct ifreq ifr;
-    memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
-
-    struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
-    addr->sin_family = AF_UNIX;
-    unsigned char *mac = (unsigned char *) &ifr.ifr_hwaddr.sa_data;
-    if (string_to_macaddr(macaddr_str, mac) < 0) {
-        debug("Bad MAC address for '%s': %s", handler->name, macaddr_str);
-        nb->last_error = EINVAL;
-        return -1;
-    }
-
-    if (ioctl(nb->inet_fd, handler->ioctl_set, &ifr) < 0) {
-        debug("ioctl(0x%04x) failed for setting '%s': %s", handler->ioctl_set, handler->name, strerror(errno));
-        nb->last_error = errno;
-        return -1;
-    }
-
-    return 0;
-}
-
-static int get_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
-{
-    struct ifreq ifr;
-    memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
-
-    if (ioctl(nb->inet_fd, handler->ioctl_get, &ifr) < 0) {
-        debug("ioctl(0x%04x) failed for getting '%s': %s", handler->ioctl_get, handler->name, strerror(errno));
-        nb->last_error = errno;
-        return -1;
-    }
-
-    struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
-    if (addr->sin_family == AF_UNIX) {
-        encode_kv_macaddr(nb, handler->name, (unsigned char *) &ifr.ifr_hwaddr.sa_data);
-    } else {
-        debug("got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
-        nb->last_error = EINVAL;
-        return -1;
-    }
-    return 0;
-}
-
-static int prep_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context)
-{
-    char ipaddr[INET_ADDRSTRLEN];
-    if (erlcmd_decode_string(nb->req, &nb->req_index, ipaddr, INET_ADDRSTRLEN) < 0)
-        errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
-
-    // Be forgiving and if the user specifies an empty IP address, just skip
-    // this request.
-    if (ipaddr[0] == '\0')
-        *context = NULL;
-    else
-        *context = strdup(ipaddr);
-
-    return 0;
-}
-
-static int set_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
-{
-    const char *ipaddr = (const char *) context;
-
-    struct ifreq ifr;
-    memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
-
-    struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
-    addr->sin_family = AF_INET;
-    if (inet_pton(AF_INET, ipaddr, &addr->sin_addr) <= 0) {
-        debug("Bad IP address for '%s': %s", handler->name, ipaddr);
-        nb->last_error = EINVAL;
-        return -1;
-    }
-
-    if (ioctl(nb->inet_fd, handler->ioctl_set, &ifr) < 0) {
-        debug("ioctl(0x%04x) failed for setting '%s': %s", handler->ioctl_set, handler->name, strerror(errno));
-        nb->last_error = errno;
-        return -1;
-    }
-
-    return 0;
-}
-
-static int get_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
-{
-    struct ifreq ifr;
-    memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
-
-    if (ioctl(nb->inet_fd, handler->ioctl_get, &ifr) < 0) {
-        debug("ioctl(0x%04x) failed for getting '%s': %s. Skipping...", handler->ioctl_get, handler->name, strerror(errno));
-        encode_kv_string(nb, handler->name, "");
-        return 0;
-    }
-
-    struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
-    if (addr->sin_family == AF_INET) {
-        char addrstr[INET_ADDRSTRLEN];
-        if (!inet_ntop(addr->sin_family, &addr->sin_addr, addrstr, sizeof(addrstr))) {
-            debug("inet_ntop failed for '%s'? : %s", handler->name, strerror(errno));
-            nb->last_error = errno;
-            return -1;
-        }
-        encode_kv_string(nb, handler->name, addrstr);
-    } else {
-        debug("got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
-        nb->last_error = EINVAL;
-        return -1;
-    }
-    return 0;
-}
-
-static int remove_all_gateways(struct netif *nb, const char *ifname)
-{
-    struct rtentry route;
-    memset(&route, 0, sizeof(route));
-
-    struct sockaddr_in *addr = (struct sockaddr_in *) &route.rt_gateway;
-    addr->sin_family = AF_INET;
-    addr->sin_addr.s_addr = INADDR_ANY;
-
-    addr = (struct sockaddr_in*) &route.rt_dst;
-    addr->sin_family = AF_INET;
-    addr->sin_addr.s_addr = INADDR_ANY;
-
-    addr = (struct sockaddr_in*) &route.rt_genmask;
-    addr->sin_family = AF_INET;
-    addr->sin_addr.s_addr = INADDR_ANY;
-
-    route.rt_dev = (char *) ifname;
-    route.rt_flags = RTF_GATEWAY;
-    route.rt_metric = 0;
-
-    // There may be more than one gateway. Remove all
-    // of them.
-    for (;;) {
-        int rc = ioctl(nb->inet_fd, SIOCDELRT, &route);
-        if (rc < 0) {
-            if (errno == ESRCH) {
-                return 0;
-            } else {
-                nb->last_error = errno;
-                return -1;
-            }
-        }
-    }
-}
-
-static int add_default_gateway(struct netif *nb, const char *ifname, const char *gateway_ip)
-{
-    struct rtentry route;
-    memset(&route, 0, sizeof(route));
-
-    struct sockaddr_in *addr = (struct sockaddr_in *)&route.rt_gateway;
-    memset(addr, 0, sizeof(struct sockaddr_in));
-    addr->sin_family = AF_INET;
-    if (inet_pton(AF_INET, gateway_ip, &addr->sin_addr) <= 0) {
-        debug("Bad IP address for the default gateway: %s", gateway_ip);
-        nb->last_error = EINVAL;
-        return -1;
-    }
-
-    addr = (struct sockaddr_in*) &route.rt_dst;
-    memset(addr, 0, sizeof(struct sockaddr_in));
-    addr->sin_family = AF_INET;
-    addr->sin_addr.s_addr = INADDR_ANY;
-
-    addr = (struct sockaddr_in*) &route.rt_genmask;
-    memset(addr, 0, sizeof(struct sockaddr_in));
-    addr->sin_family = AF_INET;
-    addr->sin_addr.s_addr = INADDR_ANY;
-
-    route.rt_dev = (char *) ifname;
-    route.rt_flags = RTF_UP | RTF_GATEWAY;
-    route.rt_metric = 0;
-
-    int rc = ioctl(nb->inet_fd, SIOCADDRT, &route);
-    if (rc < 0 && errno != EEXIST) {
-        nb->last_error = errno;
-        return -1;
-    }
-    return 0;
-}
-
-static int prep_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, void **context)
-{
-    char gateway[INET_ADDRSTRLEN];
-    if (erlcmd_decode_string(nb->req, &nb->req_index, gateway, INET_ADDRSTRLEN) < 0)
-        errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
-
-    *context = strdup(gateway);
-    return 0;
-}
-
-static int set_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
-{
-    (void) handler;
-    const char *gateway = context;
-
-    // Before one can be set, any configured gateways need to be removed.
-    if (remove_all_gateways(nb, ifname) < 0)
-        return -1;
-
-    // If no gateway was specified, then we're done.
-    if (*gateway == '\0')
-        return 0;
-
-    return add_default_gateway(nb, ifname, gateway);
-}
-
-static int ifname_to_index(struct netif *nb, const char *ifname)
-{
-    struct ifreq ifr;
-    memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
-
-    if (ioctl(nb->inet_fd, SIOCGIFINDEX, &ifr) < 0) {
-        nb->last_error = errno;
-        return -1;
-    }
-    return ifr.ifr_ifindex;
-}
-
-static int get_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
-{
-    int oif = ifname_to_index(nb, ifname);
-    if (oif < 0)
-        return -1;
-
-    char gateway_ip[INET_ADDRSTRLEN];
-    find_default_gateway(nb, oif, gateway_ip);
-
-    // If the gateway isn't found, then the empty string is what we want.
-    encode_kv_string(nb, handler->name, gateway_ip);
-    return 0;
-}
 
 static void netif_handle_get(struct netif *nb,
                                  const char *ifname)
@@ -903,12 +433,14 @@ static void netif_handle_get(struct netif *nb,
     start_response(nb);
     int original_resp_index = nb->resp_index;
 
+    size_t num_entries = ip_setting_count();
+
     ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
     ei_encode_atom(nb->resp, &nb->resp_index, "ok");
-    ei_encode_map_header(nb->resp, &nb->resp_index, HANDLER_COUNT);
+    ei_encode_map_header(nb->resp, &nb->resp_index, num_entries);
 
     nb->last_error = 0;
-    for (size_t i = 0; i < HANDLER_COUNT; i++) {
+    for (size_t i = 0; i < num_entries; i++) {
         const struct ip_setting_handler *handler = &handlers[i];
         if (handler->get(handler, nb, ifname) < 0)
             break;
@@ -923,8 +455,9 @@ static void netif_handle_get(struct netif *nb,
 
 static const struct ip_setting_handler *find_handler(const char *name)
 {
-    for (size_t i = 0; i < HANDLER_COUNT; i++) {
-        const struct ip_setting_handler *handler = &handlers[i];
+    for (const struct ip_setting_handler *handler = handlers;
+         handler->name != NULL;
+         handler++) {
         if (strcmp(handler->name, name) == 0)
             return handler;
     }
@@ -942,7 +475,8 @@ static void netif_handle_set(struct netif *nb,
     if (ei_decode_map_header(nb->req, &nb->req_index, &arity) < 0)
         errx(EXIT_FAILURE, "setting attributes requires a map");
 
-    void *handler_context[HANDLER_COUNT];
+    size_t num_entries = ip_setting_count();
+    void *handler_context[num_entries];
     memset(handler_context, 0, sizeof(handler_context));
 
     // Parse all options
@@ -963,7 +497,7 @@ static void netif_handle_set(struct netif *nb,
     // If no errors, then set everything
     if (!nb->last_error) {
         // Order is important: see note on handlers
-        for (size_t i = 0; i < HANDLER_COUNT; i++) {
+        for (size_t i = 0; i < num_entries; i++) {
             if (handler_context[i]) {
                 handlers[i].set(&handlers[i], nb, ifname, handler_context[i]);
                 free(handler_context[i]);

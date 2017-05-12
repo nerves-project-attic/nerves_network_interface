@@ -470,11 +470,6 @@ int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
     case RTM_NEWNDUSEROPT: debug("RTM_NEWNDUSEROPT"); break;
     case RTM_NEWADDRLABEL: debug("RTM_NEWADDRLABEL"); break;
     case RTM_DELADDRLABEL: debug("RTM_DELADDRLABEL"); break;
-    case RTM_NEWNETCONF: debug("RTM_NEWNETCONF"); break;
-    case RTM_NEWMDB: debug("RTM_NEWMDB"); break;
-    case RTM_DELMDB: debug("RTM_DELMDB"); break;
-    case RTM_NEWNSID: debug("RTM_NEWNSID"); break;
-    case RTM_DELNSID: debug("RTM_DELNSID"); break;
 
     default:
         debug("Need to add %d!", nlh->nlmsg_type);

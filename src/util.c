@@ -19,6 +19,9 @@
 #include "netif.h"
 
 #include <string.h>
+#include <ctype.h>
+
+#include <arpa/inet.h>
 
 int string_to_macaddr(const char *str, unsigned char *mac)
 {
@@ -103,3 +106,61 @@ void encode_kv_ipaddress(struct netif *nb, const char *key, int af, const void *
         encode_kv_string(nb, key, "");
     }
 }
+
+#ifdef DEBUG
+void fprintf_nested(FILE *fd, const struct nlattr *attr)
+{
+    int rem = 0;
+    unsigned int i;
+
+
+    for (i=0; i< mnl_attr_get_payload_len(attr); i+=4) {
+        char *b = (char *) mnl_attr_get_payload(attr);
+        const struct nlattr *subattr = (const struct nlattr *) (b+i);
+
+        if (rem == 0 && (subattr->nla_type & NLA_TYPE_MASK) != 0) {
+            fprintf(fd, "|%c[%d;%dm"
+                        "%.5u"
+                        "%c[%dm"
+                        "|"
+                        "%c[%d;%dm"
+                        "%c%c"
+                        "%c[%dm"
+                        "|"
+                        "%c[%d;%dm"
+                        "%.5u"
+                        "%c[%dm|\t",
+                    27, 1, 31,
+                    subattr->nla_len,
+                    27, 0,
+                    27, 1, 32,
+                    subattr->nla_type & NLA_F_NESTED ? 'N' : '-',
+                    subattr->nla_type &
+                    NLA_F_NET_BYTEORDER ? 'B' : '-',
+                    27, 0,
+                    27, 1, 34,
+                    subattr->nla_type & NLA_TYPE_MASK,
+                    27, 0);
+            fprintf(fd, "|len |flags| type|\n");
+
+            if (!(subattr->nla_type & NLA_F_NESTED)) {
+                rem = NLA_ALIGN(subattr->nla_len) -
+                        sizeof(struct nlattr);
+            }
+            /* this is the attribute payload. */
+        } else if (rem > 0) {
+            rem -= 4;
+            fprintf(fd, "| %.2x %.2x %.2x %.2x  |\t",
+                    0xff & b[i],    0xff & b[i+1],
+                    0xff & b[i+2],  0xff & b[i+3]);
+            fprintf(fd, "|      data      |");
+            fprintf(fd, "\t %c %c %c %c\n",
+                    isprint(b[i]) ? b[i] : ' ',
+                    isprint(b[i+1]) ? b[i+1] : ' ',
+                isprint(b[i+2]) ? b[i+2] : ' ',
+                isprint(b[i+3]) ? b[i+3] : ' ');
+        }
+    }
+    fprintf(fd, "----------------\t------------------\n");
+}
+#endif

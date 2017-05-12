@@ -106,6 +106,10 @@ void erlcmd_process(struct erlcmd *handler)
         /* EOF. Erlang process was terminated. This happens after a release or if there was an error. */
         exit(EXIT_SUCCESS);
     }
+{
+        handler->index = 0;
+        return;
+    }
 
     handler->index += amount_read;
     for (;;) {

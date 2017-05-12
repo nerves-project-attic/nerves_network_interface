@@ -50,7 +50,7 @@ all: priv/netif
 %.o: %.c
 	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) -o $@ $<
 
-priv/netif: src/erlcmd.o src/netif.o
+priv/netif: src/erlcmd.o src/netif.o src/netif_routing.o src/netif_rtnetlink.o src/netif_settings.o src/netif_uevent.o src/util.o
 	@mkdir -p priv
 	$(CC) $^ $(ERL_LDFLAGS) $(LDFLAGS) -o $@
 	# setuid root net_basic so that it can configure network interfaces

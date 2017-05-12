@@ -40,7 +40,6 @@ int macaddr_to_string(const unsigned char *mac, char *str)
     return 0;
 }
 
-
 void encode_kv_long(struct netif *nb, const char *key, long value)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, key);
@@ -69,6 +68,11 @@ void encode_kv_string(struct netif *nb, const char *key, const char *str)
     ei_encode_atom(nb->resp, &nb->resp_index, key);
     encode_string(nb->resp, &nb->resp_index, str);
 }
+void encode_kv_atom(struct netif *nb, const char *key, const char *str)
+{
+    ei_encode_atom(nb->resp, &nb->resp_index, key);
+    ei_encode_atom(nb->resp, &nb->resp_index, str);
+}
 
 void encode_kv_macaddr(struct netif *nb, const char *key, const unsigned char *macaddr)
 {
@@ -80,4 +84,22 @@ void encode_kv_macaddr(struct netif *nb, const char *key, const unsigned char *m
     macaddr_to_string(macaddr, macaddr_str);
 
     encode_string(nb->resp, &nb->resp_index, macaddr_str);
+}
+
+/**
+ * @brief Encode an IP address
+ *
+ * @param key the kv key part
+ * @param af AF_INET or AF_INET6
+ * @param addr the IP address in binary form
+ */
+void encode_kv_ipaddress(struct netif *nb, const char *key, int af, const void *addr)
+{
+    char addrstr[INET6_ADDRSTRLEN];
+    if (inet_ntop(af, addr, addrstr, sizeof(addrstr))) {
+        encode_kv_string(nb, key, addrstr);
+    } else {
+        debug("inet_ntop failed for '%s'? : %s", key, strerror(errno));
+        encode_kv_string(nb, key, "");
+    }
 }

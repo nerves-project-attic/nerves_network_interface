@@ -16,7 +16,9 @@
  */
 
 #include "netif.h"
+#include "netif_rtnetlink.h"
 #include "netif_settings.h"
+#include "netif_uevent.h"
 #include "util.h"
 
 #include <err.h>
@@ -34,12 +36,6 @@
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 
-// In Ubuntu 16.04, it seems that the new compat logic handling is preventing
-// IFF_LOWER_UP from being defined properly. It looks like a bug, so define it
-// here so that this file compiles.  A scan of all Nerves platforms and Ubuntu
-// 16.04 has IFF_LOWER_UP always being set to 0x10000.
-#define WORKAROUND_IFF_LOWER_UP (0x10000)
-
 static void netif_init(struct netif *nb)
 {
     memset(nb, 0, sizeof(*nb));
@@ -47,7 +43,7 @@ static void netif_init(struct netif *nb)
     if (!nb->nl)
         err(EXIT_FAILURE, "mnl_socket_open (NETLINK_ROUTE)");
 
-    if (mnl_socket_bind(nb->nl, RTMGRP_LINK, MNL_SOCKET_AUTOPID) < 0)
+    if (mnl_socket_bind(nb->nl, RTMGRP_LINK | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR, MNL_SOCKET_AUTOPID) < 0)
         err(EXIT_FAILURE, "mnl_socket_bind");
 
     nb->nl_uevent = mnl_socket_open(NETLINK_KOBJECT_UEVENT);
@@ -86,207 +82,6 @@ static void send_response(struct netif *nb)
     nb->resp_index = 0;
 }
 
-static int collect_if_attrs(const struct nlattr *attr, void *data)
-{
-    const struct nlattr **tb = data;
-    int type = mnl_attr_get_type(attr);
-
-    // Skip unsupported attributes in user-space
-    if (mnl_attr_type_valid(attr, IFLA_MAX) < 0)
-        return MNL_CB_OK;
-
-    // Only save supported attributes (see encode logic)
-    switch (type) {
-    case IFLA_MTU:
-    case IFLA_IFNAME:
-    case IFLA_ADDRESS:
-    case IFLA_BROADCAST:
-    case IFLA_LINK:
-    case IFLA_OPERSTATE:
-    case IFLA_STATS:
-        tb[type] = attr;
-        break;
-
-    default:
-        break;
-    }
-    return MNL_CB_OK;
-}
-
-static void encode_kv_stats(struct netif *nb, const char *key, struct nlattr *attr)
-{
-    struct rtnl_link_stats *stats = (struct rtnl_link_stats *) mnl_attr_get_payload(attr);
-
-    ei_encode_atom(nb->resp, &nb->resp_index, key);
-    ei_encode_map_header(nb->resp, &nb->resp_index, 10);
-    encode_kv_ulong(nb, "rx_packets", stats->rx_packets);
-    encode_kv_ulong(nb, "tx_packets", stats->tx_packets);
-    encode_kv_ulong(nb, "rx_bytes", stats->rx_bytes);
-    encode_kv_ulong(nb, "tx_bytes", stats->tx_bytes);
-    encode_kv_ulong(nb, "rx_errors", stats->rx_errors);
-    encode_kv_ulong(nb, "tx_errors", stats->tx_errors);
-    encode_kv_ulong(nb, "rx_dropped", stats->rx_dropped);
-    encode_kv_ulong(nb, "tx_dropped", stats->tx_dropped);
-    encode_kv_ulong(nb, "multicast", stats->multicast);
-    encode_kv_ulong(nb, "collisions", stats->collisions);
-}
-
-static void encode_kv_operstate(struct netif *nb, int operstate)
-{
-    ei_encode_atom(nb->resp, &nb->resp_index, "operstate");
-
-    // Refer to RFC2863 for state descriptions (or the kernel docs)
-    const char *operstate_atom;
-    switch (operstate) {
-    default:
-    case IF_OPER_UNKNOWN:        operstate_atom = "unknown"; break;
-    case IF_OPER_NOTPRESENT:     operstate_atom = "notpresent"; break;
-    case IF_OPER_DOWN:           operstate_atom = "down"; break;
-    case IF_OPER_LOWERLAYERDOWN: operstate_atom = "lowerlayerdown"; break;
-    case IF_OPER_TESTING:        operstate_atom = "testing"; break;
-    case IF_OPER_DORMANT:        operstate_atom = "dormant"; break;
-    case IF_OPER_UP:             operstate_atom = "up"; break;
-    }
-    ei_encode_atom(nb->resp, &nb->resp_index, operstate_atom);
-}
-
-static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
-{
-    struct netif *nb = (struct netif *) data;
-    struct nlattr *tb[IFLA_MAX + 1];
-    memset(tb, 0, sizeof(tb));
-    struct ifinfomsg *ifm = mnl_nlmsg_get_payload(nlh);
-
-    if (mnl_attr_parse(nlh, sizeof(*ifm), collect_if_attrs, tb) != MNL_CB_OK) {
-        debug("Error from mnl_attr_parse");
-        return MNL_CB_ERROR;
-    }
-
-    int count = 7; // Number of fields that we always encode
-    int i;
-    for (i = 0; i <= IFLA_MAX; i++)
-        if (tb[i])
-            count++;
-
-    ei_encode_map_header(nb->resp, &nb->resp_index, count);
-
-    encode_kv_long(nb, "index", ifm->ifi_index);
-
-    ei_encode_atom(nb->resp, &nb->resp_index, "type");
-    ei_encode_atom(nb->resp, &nb->resp_index, ifm->ifi_type == ARPHRD_ETHER ? "ethernet" : "other");
-
-    encode_kv_bool(nb, "is_up", ifm->ifi_flags & IFF_UP);
-    encode_kv_bool(nb, "is_broadcast", ifm->ifi_flags & IFF_BROADCAST);
-    encode_kv_bool(nb, "is_running", ifm->ifi_flags & IFF_RUNNING);
-    encode_kv_bool(nb, "is_lower_up", ifm->ifi_flags & WORKAROUND_IFF_LOWER_UP);
-    encode_kv_bool(nb, "is_multicast", ifm->ifi_flags & IFF_MULTICAST);
-
-    if (tb[IFLA_MTU])
-        encode_kv_ulong(nb, "mtu", mnl_attr_get_u32(tb[IFLA_MTU]));
-    if (tb[IFLA_IFNAME])
-        encode_kv_string(nb, "ifname", mnl_attr_get_str(tb[IFLA_IFNAME]));
-    if (tb[IFLA_ADDRESS])
-        encode_kv_macaddr(nb, "mac_address", mnl_attr_get_payload(tb[IFLA_ADDRESS]));
-    if (tb[IFLA_BROADCAST])
-        encode_kv_macaddr(nb, "mac_broadcast", mnl_attr_get_payload(tb[IFLA_BROADCAST]));
-    if (tb[IFLA_LINK])
-        encode_kv_ulong(nb, "link", mnl_attr_get_u32(tb[IFLA_LINK]));
-    if (tb[IFLA_OPERSTATE])
-        encode_kv_operstate(nb, mnl_attr_get_u32(tb[IFLA_OPERSTATE]));
-    if (tb[IFLA_STATS])
-        encode_kv_stats(nb, "stats", tb[IFLA_STATS]);
-
-    return MNL_CB_OK;
-}
-
-static void nl_uevent_process(struct netif *nb)
-{
-    int bytecount = mnl_socket_recvfrom(nb->nl_uevent, nb->nlbuf, sizeof(nb->nlbuf));
-    if (bytecount <= 0)
-        err(EXIT_FAILURE, "mnl_socket_recvfrom");
-
-    // uevent messages are concatenated strings
-    enum hotplug_operation {
-        HOTPLUG_OPERATION_NONE = 0,
-        HOTPLUG_OPERATION_ADD,
-        HOTPLUG_OPERATION_MOVE,
-        HOTPLUG_OPERATION_REMOVE
-    } operation = HOTPLUG_OPERATION_NONE;
-
-    const char *str = nb->nlbuf;
-    if (strncmp(str, "add@", 4) == 0)
-        operation = HOTPLUG_OPERATION_ADD;
-    else if (strncmp(str, "move@", 5) == 0)
-        operation = HOTPLUG_OPERATION_MOVE;
-    else if (strncmp(str, "remove@", 7) == 0)
-        operation = HOTPLUG_OPERATION_REMOVE;
-    else
-        return; // Not interested in this message.
-
-    const char *str_end = str + bytecount;
-    str += strlen(str) + 1;
-
-    // Extract the fields of interest
-    const char *ifname = NULL;
-    const char *subsystem = NULL;
-    const char *ifindex = NULL;
-    for (;str < str_end; str += strlen(str) + 1) {
-        if (strncmp(str, "INTERFACE=", 10) == 0)
-            ifname = str + 10;
-        else if (strncmp(str, "SUBSYSTEM=", 10) == 0)
-            subsystem = str + 10;
-        else if (strncmp(str, "IFINDEX=", 8) == 0)
-            ifindex = str + 8;
-    }
-
-    // Check that we have the required fields that this is a
-    // "net" subsystem event. If yes, send the notification.
-    if (ifname && subsystem && ifindex && strcmp(subsystem, "net") == 0) {
-        nb->resp_index = sizeof(uint16_t); // Skip over payload size
-        nb->resp[nb->resp_index++] = 'n';
-        ei_encode_version(nb->resp, &nb->resp_index);
-
-        ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
-
-        switch (operation) {
-        case HOTPLUG_OPERATION_ADD:
-            ei_encode_atom(nb->resp, &nb->resp_index, "ifadded");
-            break;
-        case HOTPLUG_OPERATION_MOVE:
-            ei_encode_atom(nb->resp, &nb->resp_index, "ifrenamed");
-            break;
-        case HOTPLUG_OPERATION_REMOVE:
-        default: // Silence warning
-            ei_encode_atom(nb->resp, &nb->resp_index, "ifremoved");
-            break;
-        }
-
-        ei_encode_map_header(nb->resp, &nb->resp_index, 2);
-
-        encode_kv_long(nb, "index", strtol(ifindex, NULL, 0));
-        encode_kv_string(nb, "ifname", ifname);
-
-        erlcmd_send(nb->resp, nb->resp_index);
-    }
-}
-
-static void handle_notification(struct netif *nb, int bytecount)
-{
-    // Create the notification
-    nb->resp_index = sizeof(uint16_t); // Skip over payload size
-    nb->resp[nb->resp_index++] = 'n';
-    ei_encode_version(nb->resp, &nb->resp_index);
-
-    ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
-
-    // Currently, the only notifications are interface changes.
-    ei_encode_atom(nb->resp, &nb->resp_index, "ifchanged");
-    if (mnl_cb_run(nb->nlbuf, bytecount, 0, 0, netif_build_ifinfo, nb) <= 0)
-        err(EXIT_FAILURE, "mnl_cb_run");
-
-    erlcmd_send(nb->resp, nb->resp_index);
-}
-
 static void handle_async_response(struct netif *nb, int bytecount)
 {
     nb->response_callback(nb, bytecount);
@@ -316,9 +111,9 @@ static void nl_route_process(struct netif *nb)
         else if (rc == MNL_CB_ERROR && errno != ESRCH && errno != EPROTO)
             handle_async_response_error(nb, errno);
         else
-            handle_notification(nb, bytecount);
+            handle_rtnetlink_notification(nb, bytecount);
     } else
-        handle_notification(nb, bytecount);
+        handle_rtnetlink_notification(nb, bytecount);
 }
 
 static void netif_handle_interfaces(struct netif *nb)

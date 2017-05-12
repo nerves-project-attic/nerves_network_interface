@@ -156,6 +156,7 @@ static void encode_kv_operstate(struct netif *nb, int operstate)
     ei_encode_atom(nb->resp, &nb->resp_index, operstate_atom);
 }
 
+#ifdef DECODE_AF_SPEC // Not supported yet.
 static int collect_af_inet_attrs(const struct nlattr *attr, void *data)
 {
     struct attr_collection *collection = data;
@@ -163,9 +164,6 @@ static int collect_af_inet_attrs(const struct nlattr *attr, void *data)
     // Skip unsupported attributes in user-space
     if (mnl_attr_type_valid(attr, IFLA_INET_MAX) < 0)
         return MNL_CB_OK;
-
-    //int type = mnl_attr_get_type(attr);
-    //collection->af_inet_tb[type] = attr;
 
     return MNL_CB_OK;
 }
@@ -177,9 +175,6 @@ static int collect_af_inet6_attrs(const struct nlattr *attr, void *data)
     // Skip unsupported attributes in user-space
     if (mnl_attr_type_valid(attr, IFLA_INET6_MAX) < 0)
         return MNL_CB_OK;
-
-    //int type = mnl_attr_get_type(attr);
-    //collection->af_inet6_tb[type] = attr;
 
     return MNL_CB_OK;
 }
@@ -220,6 +215,7 @@ static int collect_af_spec_attrs(const struct nlattr *attr, void *data)
 
     return rc;
 }
+#endif
 
 static int ifla_encode_mtu(struct attr_collection *collection, const struct nlattr *tb)
 {
@@ -256,6 +252,7 @@ static int ifla_encode_stats(struct attr_collection *collection, const struct nl
     encode_kv_stats(collection->nb, "stats", tb);
     return MNL_CB_OK;
 }
+#ifdef DECODE_AF_SPEC
 static int ifla_encode_af_spec(struct attr_collection *collection, const struct nlattr *tb)
 {
     struct netif *nb = collection->nb;
@@ -273,6 +270,7 @@ static int ifla_encode_af_spec(struct attr_collection *collection, const struct 
 
     return rc;
 }
+#endif
 
 typedef int (*ifla_encoder)(struct attr_collection *collection, const struct nlattr *tb);
 
@@ -284,7 +282,9 @@ static ifla_encoder ifla_encoders[IFLA_MAX + 1] = {
     [IFLA_LINK] = ifla_encode_link,
     [IFLA_OPERSTATE] = ifla_encode_operstate,
     [IFLA_STATS] = ifla_encode_stats,
+    #ifdef DECODE_AF_SPEC
     [IFLA_AF_SPEC] = ifla_encode_af_spec,
+    #endif
 };
 
 
@@ -329,7 +329,7 @@ static int ifa_encode_anycast(struct attr_collection *collection, const struct n
     return MNL_CB_OK;
 }
 
-static ifla_encoder ifa_encoders[IFA_MAX] = {
+static ifla_encoder ifa_encoders[IFA_MAX + 1] = {
     [IFA_ADDRESS] = ifa_encode_address,
     [IFA_LOCAL] = ifa_encode_local,
     [IFA_LABEL] = ifa_encode_label,
@@ -372,12 +372,41 @@ static const char *ifi_type_to_string(unsigned short ifi_type)
     }
 }
 
-int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
+static const char *nlmsg_type_to_string(unsigned short nlmsg_type)
 {
-    struct netif *nb = (struct netif *) data;
-    struct attr_collection collection;
-    memset(&collection, 0, sizeof(collection));
-    collection.nb = nb;
+    switch (nlmsg_type) {
+    case RTM_NEWLINK: return "newlink";
+    case RTM_DELLINK: return "dellink";
+    case RTM_NEWADDR: return "newaddr";
+    case RTM_DELADDR: return "deladdr";
+    case RTM_NEWROUTE: return "newroute";
+    case RTM_DELROUTE: return "delroute";
+    case RTM_NEWNEIGH: return "newneigh";
+    case RTM_DELNEIGH: return "delneigh";
+    case RTM_NEWRULE: return "newrule";
+    case RTM_DELRULE: return "delrule";
+    case RTM_NEWQDISC: return "newqdisc";
+    case RTM_DELQDISC: return "delqdisc";
+    case RTM_NEWTCLASS: return "newtclass";
+    case RTM_DELTCLASS: return "deltclass";
+    case RTM_NEWTFILTER: return "newtfilter";
+    case RTM_DELTFILTER: return "deltfilter";
+    default: return "unknown";
+    }
+}
+
+static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
+{
+    struct attr_collection *collection = data;
+    struct netif *nb = collection->nb;
+
+    debug("Got a %s", nlmsg_type_to_string(nlh->nlmsg_type));
+
+    attr_collection_incr(collection);
+    attr_collection_push(collection);
+
+    ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
+    ei_encode_atom(nb->resp, &nb->resp_index, nlmsg_type_to_string(nlh->nlmsg_type));
 
     // Add a map header, but don't fill in the count field until the end when we know it.
     int map_count_index = nb->resp_index;
@@ -404,13 +433,26 @@ int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
         encode_kv_bool(nb, "is_running", ifm->ifi_flags & IFF_RUNNING);
         encode_kv_bool(nb, "is_lower_up", ifm->ifi_flags & WORKAROUND_IFF_LOWER_UP);
         encode_kv_bool(nb, "is_multicast", ifm->ifi_flags & IFF_MULTICAST);
-        collection.count[collection.level] += 7;
+        collection->count[collection->level] += 7;
     }
         break;
     case RTM_DELLINK:
+    {
         debug("RTM_DELLINK\n");
         cb = collect_rtm_newlink_attrs;
         offset = sizeof(struct ifinfomsg);
+
+        const struct ifinfomsg *ifm = mnl_nlmsg_get_payload(nlh);
+        encode_kv_long(nb, "index", ifm->ifi_index);
+        encode_kv_atom(nb, "type", ifi_type_to_string(ifm->ifi_type));
+
+        encode_kv_bool(nb, "is_up", ifm->ifi_flags & IFF_UP);
+        encode_kv_bool(nb, "is_broadcast", ifm->ifi_flags & IFF_BROADCAST);
+        encode_kv_bool(nb, "is_running", ifm->ifi_flags & IFF_RUNNING);
+        encode_kv_bool(nb, "is_lower_up", ifm->ifi_flags & WORKAROUND_IFF_LOWER_UP);
+        encode_kv_bool(nb, "is_multicast", ifm->ifi_flags & IFF_MULTICAST);
+        collection->count[collection->level] += 7;
+    }
         break;
 
     case RTM_NEWADDR:
@@ -427,8 +469,8 @@ int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
         encode_kv_ulong(nb, "scope", ifa->ifa_scope);
         encode_kv_ulong(nb, "prefixlen", ifa->ifa_prefixlen);
 
-        collection.af_family = ifa->ifa_family;
-        collection.count[collection.level] += 4;
+        collection->af_family = ifa->ifa_family;
+        collection->count[collection->level] += 4;
         cb = collect_rtm_newaddr_attrs;
         offset = sizeof(struct ifaddrmsg);
         break;
@@ -444,32 +486,12 @@ int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
         encode_kv_ulong(nb, "scope", ifa->ifa_scope);
         encode_kv_ulong(nb, "prefixlen", ifa->ifa_prefixlen);
 
-        collection.af_family = ifa->ifa_family;
-        collection.count[collection.level] += 4;
+        collection->af_family = ifa->ifa_family;
+        collection->count[collection->level] += 4;
         cb = collect_rtm_newaddr_attrs;
         offset = sizeof(struct ifaddrmsg);
         break;
     }
-
-    case RTM_NEWROUTE: debug("RTM_NEWROUTE"); break;
-    case RTM_DELROUTE: debug("RTM_DELROUTE"); break;
-    case RTM_NEWNEIGH: debug("RTM_NEWNEIGH"); break;
-    case RTM_DELNEIGH: debug("RTM_DELNEIGH"); break;
-    case RTM_NEWRULE: debug("RTM_NEWRULE"); break;
-    case RTM_DELRULE: debug("RTM_DELRULE"); break;
-    case RTM_NEWQDISC: debug("RTM_NEWQDISC"); break;
-    case RTM_DELQDISC: debug("RTM_DELQDISC"); break;
-    case RTM_NEWTCLASS: debug("RTM_NEWTCLASS"); break;
-    case RTM_DELTCLASS: debug("RTM_DELTCLASS"); break;
-    case RTM_NEWTFILTER: debug("RTM_NEWTFILTER"); break;
-    case RTM_DELTFILTER: debug("RTM_DELTFILTER"); break;
-    case RTM_NEWACTION: debug("RTM_NEWACTION"); break;
-    case RTM_DELACTION: debug("RTM_DELACTION"); break;
-    case RTM_NEWPREFIX: debug("RTM_NEWPREFIX"); break;
-    case RTM_NEWNEIGHTBL: debug("RTM_NEWNEIGHTBL"); break;
-    case RTM_NEWNDUSEROPT: debug("RTM_NEWNDUSEROPT"); break;
-    case RTM_NEWADDRLABEL: debug("RTM_NEWADDRLABEL"); break;
-    case RTM_DELADDRLABEL: debug("RTM_DELADDRLABEL"); break;
 
     default:
         debug("Need to add %d!", nlh->nlmsg_type);
@@ -477,13 +499,14 @@ int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
     }
 
     if (cb) {
-        if (mnl_attr_parse(nlh, offset, cb, &collection) != MNL_CB_OK) {
+        if (mnl_attr_parse(nlh, offset, cb, collection) != MNL_CB_OK) {
             debug("Error from mnl_attr_parse");
             return MNL_CB_ERROR;
         }
     }
     // Go back and write the number of entries in the map.
-    ei_encode_map_header(nb->resp, &map_count_index, collection.count[collection.level]);
+    int count = attr_collection_pop(collection);
+    ei_encode_map_header(nb->resp, &map_count_index, count);
 
     return MNL_CB_OK;
 }
@@ -495,16 +518,24 @@ void handle_rtnetlink_notification(struct netif *nb, int bytecount)
     nb->resp[nb->resp_index++] = 'n';
     ei_encode_version(nb->resp, &nb->resp_index);
 
-    ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
+    struct attr_collection collection;
+    memset(&collection, 0, sizeof(collection));
+    collection.nb = nb;
+
+    int list_index = nb->resp_index;
+    ei_encode_list_header(nb->resp, &nb->resp_index, 1);
 
 #if 0
     debug("mnl_nlmsg_fprintf{\n");
     mnl_nlmsg_fprintf(stderr, nb->nlbuf, bytecount, sizeof(struct ifinfomsg));
     debug("}mnl_nlmsg_fprintf\n");
 #endif
-    ei_encode_atom(nb->resp, &nb->resp_index, "ifchanged");
-    if (mnl_cb_run(nb->nlbuf, bytecount, 0, 0, netif_build_ifinfo, nb) <= 0)
+
+    if (mnl_cb_run(nb->nlbuf, bytecount, 0, 0, netif_build_ifinfo, &collection) <= 0)
         err(EXIT_FAILURE, "mnl_cb_run");
+
+    nb->resp[nb->resp_index++] = ERL_NIL_EXT; // One would think there's be an ei_encode_nil..
+    ei_encode_list_header(nb->resp, &list_index, collection.count[0]);
 
     erlcmd_send(nb->resp, nb->resp_index);
 }

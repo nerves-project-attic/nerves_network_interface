@@ -137,30 +137,6 @@ static void netif_handle_interfaces(struct netif *nb)
     send_response(nb);
 }
 
-static void netif_handle_status_callback(struct netif *nb, int bytecount)
-{
-    start_response(nb);
-
-    int original_resp_index = nb->resp_index;
-
-    ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
-    ei_encode_atom(nb->resp, &nb->resp_index, "ok");
-    if (mnl_cb_run(nb->nlbuf, bytecount, nb->response_seq, nb->response_portid, netif_build_ifinfo, nb) < 0) {
-        debug("error from or mnl_cb_run?");
-        nb->resp_index = original_resp_index;
-        erlcmd_encode_errno_error(nb->resp, &nb->resp_index, errno);
-    }
-
-    send_response(nb);
-}
-
-static void netif_handle_status_error_callback(struct netif *nb, int err)
-{
-    start_response(nb);
-    erlcmd_encode_errno_error(nb->resp, &nb->resp_index, err);
-    send_response(nb);
-}
-
 static void netif_handle_status(struct netif *nb,
                                     const char *ifname)
 {
@@ -185,10 +161,9 @@ static void netif_handle_status(struct netif *nb,
     if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0)
         err(EXIT_FAILURE, "mnl_socket_send");
 
-    nb->response_callback = netif_handle_status_callback;
-    nb->response_error_callback = netif_handle_status_error_callback;
-    nb->response_portid = mnl_socket_get_portid(nb->nl);
-    nb->response_seq = seq;
+    start_response(nb);
+    ei_encode_atom(nb->resp, &nb->resp_index, "ok");
+    send_response(nb);
 }
 
 static void netif_set_ifflags(struct netif *nb,

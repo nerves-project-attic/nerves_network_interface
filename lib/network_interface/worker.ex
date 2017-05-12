@@ -96,8 +96,8 @@ defmodule Nerves.NetworkInterface.Worker do
   end
 
   def handle_info({_, {:data, <<?n, message::binary>>}}, state) do
-    {notif, data} = :erlang.binary_to_term(message)
-    Logger.info "nerves_network_interface received #{inspect notif} and #{inspect data}"
+    data = :erlang.binary_to_term(message)
+    Logger.info "nerves_network_interface received #{inspect data}"
     #doit(notif, data)
 
     {:noreply, state}

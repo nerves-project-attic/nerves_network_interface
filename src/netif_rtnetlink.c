@@ -196,6 +196,11 @@ static int nlattr_encode_ulong(struct encode_state *state, const char *name, con
     encode_kv_ulong(state->nb, name, mnl_attr_get_u32(tb));
     return MNL_CB_OK;
 }
+static int nlattr_encode_uchar(struct encode_state *state, const char *name, const struct nlattr *tb)
+{
+    encode_kv_ulong(state->nb, name, mnl_attr_get_u8(tb));
+    return MNL_CB_OK;
+}
 static int nlattr_encode_operstate(struct encode_state *state, const char *name, const struct nlattr *tb)
 {
     encode_kv_operstate(state->nb, name, mnl_attr_get_u32(tb));
@@ -204,6 +209,11 @@ static int nlattr_encode_operstate(struct encode_state *state, const char *name,
 static int nlattr_encode_stats(struct encode_state *state, const char *name, const struct nlattr *tb)
 {
     encode_kv_stats(state->nb, name, tb);
+    return MNL_CB_OK;
+}
+static int nlattr_encode_ipaddress(struct encode_state *state, const char *name, const struct nlattr *tb)
+{
+    encode_kv_ipaddress(state->nb, name, state->af_family, mnl_attr_get_payload(tb));
     return MNL_CB_OK;
 }
 #ifdef DECODE_AF_SPEC
@@ -240,11 +250,10 @@ static const struct nlattr_encoder_info ifla_encoders[IFLA_MAX + 1] = {
     [IFLA_LINK] = {"link", nlattr_encode_ulong},
     [IFLA_OPERSTATE] = {"operstate", nlattr_encode_operstate},
     [IFLA_STATS] = {"stats", nlattr_encode_stats},
-    #ifdef DECODE_AF_SPEC
+#ifdef DECODE_AF_SPEC
     [IFLA_AF_SPEC] = {"af_spec", ifla_encode_af_spec},
-    #endif
+#endif
 };
-
 
 static int encode_rtm_link_attrs(const struct nlattr *attr, void *data)
 {
@@ -260,12 +269,6 @@ static int encode_rtm_link_attrs(const struct nlattr *attr, void *data)
     }
 
     return rc;
-}
-
-static int nlattr_encode_ipaddress(struct encode_state *state, const char *name, const struct nlattr *tb)
-{
-    encode_kv_ipaddress(state->nb, name, state->af_family, mnl_attr_get_payload(tb));
-    return MNL_CB_OK;
 }
 
 static const struct nlattr_encoder_info ifa_encoders[IFA_MAX + 1] = {
@@ -301,8 +304,11 @@ static const struct nlattr_encoder_info rta_encoders[RTA_MAX + 1] = {
     [RTA_IIF] = {"iif", nlattr_encode_ulong},
     [RTA_OIF] = {"oif", nlattr_encode_ulong},
     [RTA_GATEWAY] = {"gateway", nlattr_encode_ipaddress},
-    //[RTA_PRIORITY] = {"priority", nlattr_encode_ulong},
-    //[RTA_PREFSRC] = {"prefsrc", nlattr_encode_ipaddress},
+    [RTA_PRIORITY] = {"priority", nlattr_encode_ulong},
+    [RTA_PREFSRC] = {"prefsrc", nlattr_encode_ipaddress},
+    //[RTA_TABLE] = {"table", nlattr_encode_ulong}, // In message header, so ignore here
+    [RTA_PREF] = {"pref", nlattr_encode_uchar},
+    [RTA_MARK] = {"mark", nlattr_encode_ulong},
     //[RTA_METRICS] = {"metrics", ifla_encode_ulong},
     //[RTA_MULTIPATH] = {"multipath", ?ifla_encode_ulong},
     //[RTA_FLOW] = {"xresolve", ?ifla_encode_ulong},
@@ -360,6 +366,60 @@ static const char *nlmsg_type_to_string(unsigned short nlmsg_type)
     case RTM_DELTCLASS: return "deltclass";
     case RTM_NEWTFILTER: return "newtfilter";
     case RTM_DELTFILTER: return "deltfilter";
+    default: return "unknown";
+    }
+}
+
+static const char *rtm_type_to_string(unsigned char rtm_type)
+{
+    switch (rtm_type) {
+    case RTN_UNSPEC: return "unspec";
+    case RTN_UNICAST: return "unicast";
+    case RTN_LOCAL: return "local";
+    case RTN_BROADCAST: return "broadcast";
+    case RTN_ANYCAST: return "anycast";
+    case RTN_MULTICAST: return "multicast";
+    case RTN_BLACKHOLE: return "blackhole";
+    case RTN_UNREACHABLE: return "unreachable";
+    case RTN_PROHIBIT: return "prohibit";
+    case RTN_THROW: return "throw";
+    case RTN_NAT: return "nat";
+    case RTN_XRESOLVE: return "xresolve";
+    default: return "unknown";
+    }
+}
+
+static const char *rtm_protocol_to_string(unsigned char rtm_protocol)
+{
+    switch (rtm_protocol) {
+    case RTPROT_UNSPEC: return "unknown";
+    case RTPROT_REDIRECT: return "redirect";
+    case RTPROT_KERNEL: return "kernel";
+    case RTPROT_BOOT: return "boot";
+    case RTPROT_STATIC: return "static";
+    default: return "unknown";
+    }
+}
+
+static const char *rtm_scope_to_string(unsigned char rtm_scope)
+{
+    switch (rtm_scope) {
+    case RT_SCOPE_UNIVERSE: return "universe";
+    case RT_SCOPE_SITE: return "site";
+    case RT_SCOPE_LINK: return "link";
+    case RT_SCOPE_HOST: return "host";
+    case RT_SCOPE_NOWHERE: return "nowhere";
+    default: return "unknown";
+    }
+}
+
+static const char *rtm_table_to_string(unsigned char rtm_table)
+{
+    switch (rtm_table) {
+    case RT_TABLE_UNSPEC: return "unspec";
+    case RT_TABLE_DEFAULT: return "default";
+    case RT_TABLE_MAIN: return "main";
+    case RT_TABLE_LOCAL: return "local";
     default: return "unknown";
     }
 }
@@ -434,20 +494,25 @@ static int netif_encode_rtnetlink(const struct nlmsghdr *nlh, void *data)
 
         const struct rtmsg *rtm = mnl_nlmsg_get_payload(nlh);
         debug("RTM_NEWROUTE/DELROUTE: family=%s, dst_len=%d, src_len=%d, tos=%d, table=%d, protocol=%d, scope=%d, type=%d, flags=%d\n",
-                ifa_family_to_string(rtm->rtm_family),
-                rtm->rtm_dst_len,
-                rtm->rtm_src_len,
-                rtm->rtm_tos,
-                rtm->rtm_table,
+              ifa_family_to_string(rtm->rtm_family),
+              rtm->rtm_dst_len,
+              rtm->rtm_src_len,
+              rtm->rtm_tos,
+              rtm->rtm_table,
               rtm->rtm_protocol,
               rtm->rtm_scope,
               rtm->rtm_type,
               rtm->rtm_flags);
 
-//        encode_kv_long(nb, "index", rtm->ifa_index);
+        encode_kv_atom(nb, "family", ifa_family_to_string(rtm->rtm_family));
+        encode_kv_ulong(nb, "tos", rtm->rtm_tos);
+        encode_kv_atom(nb, "table", rtm_table_to_string(rtm->rtm_table));
+        encode_kv_atom(nb, "protocol", rtm_protocol_to_string(rtm->rtm_protocol));
+        encode_kv_atom(nb, "scope", rtm_scope_to_string(rtm->rtm_scope));
+        encode_kv_atom(nb, "type", rtm_type_to_string(rtm->rtm_type));
 
         state->af_family = rtm->rtm_family;
-        state->count[state->level] += 0;
+        state->count[state->level] += 6;
         cb = encode_rtm_route_attrs;
         offset = sizeof(struct rtmsg);
         break;

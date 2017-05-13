@@ -79,7 +79,7 @@ static void encode_state_incr(struct encode_state *state)
     state->count[state->level]++;
 }
 
-static void encode_kv_stats(struct netif *nb, const char *key, const struct nlattr *attr)
+static int encode_kv_stats(struct netif *nb, const char *key, const struct nlattr *attr)
 {
     struct rtnl_link_stats *stats = (struct rtnl_link_stats *) mnl_attr_get_payload(attr);
 
@@ -95,11 +95,13 @@ static void encode_kv_stats(struct netif *nb, const char *key, const struct nlat
     encode_kv_ulong(nb, "tx_dropped", stats->tx_dropped);
     encode_kv_ulong(nb, "multicast", stats->multicast);
     encode_kv_ulong(nb, "collisions", stats->collisions);
+
+    return 0;
 }
 
-static void encode_kv_operstate(struct netif *nb, int operstate)
+static int encode_kv_operstate(struct netif *nb, const char *key, int operstate)
 {
-    ei_encode_atom(nb->resp, &nb->resp_index, "operstate");
+    ei_encode_atom(nb->resp, &nb->resp_index, key);
 
     // Refer to RFC2863 for state descriptions (or the kernel docs)
     const char *operstate_atom;
@@ -114,6 +116,8 @@ static void encode_kv_operstate(struct netif *nb, int operstate)
     case IF_OPER_UP:             operstate_atom = "up"; break;
     }
     ei_encode_atom(nb->resp, &nb->resp_index, operstate_atom);
+
+    return 0;
 }
 
 #ifdef DECODE_AF_SPEC // Not supported yet.
@@ -177,47 +181,37 @@ static int encode_af_spec_attrs(const struct nlattr *attr, void *data)
 }
 #endif
 
-static int ifla_encode_mtu(struct encode_state *state, const struct nlattr *tb)
+static int nlattr_encode_string(struct encode_state *state, const char *name, const struct nlattr *tb)
 {
-    encode_kv_ulong(state->nb, "mtu", mnl_attr_get_u32(tb));
+    encode_kv_string(state->nb, name, mnl_attr_get_str(tb));
     return MNL_CB_OK;
 }
-static int ifla_encode_ifname(struct encode_state *state, const struct nlattr *tb)
+static int nlattr_encode_macaddr(struct encode_state *state, const char *name, const struct nlattr *tb)
 {
-    encode_kv_string(state->nb, "ifname", mnl_attr_get_str(tb));
+    encode_kv_macaddr(state->nb, name, mnl_attr_get_payload(tb));
     return MNL_CB_OK;
 }
-static int ifla_encode_address(struct encode_state *state, const struct nlattr *tb)
+static int nlattr_encode_ulong(struct encode_state *state, const char *name, const struct nlattr *tb)
 {
-    encode_kv_macaddr(state->nb, "mac_address", mnl_attr_get_payload(tb));
+    encode_kv_ulong(state->nb, name, mnl_attr_get_u32(tb));
     return MNL_CB_OK;
 }
-static int ifla_encode_broadcast(struct encode_state *state, const struct nlattr *tb)
+static int nlattr_encode_operstate(struct encode_state *state, const char *name, const struct nlattr *tb)
 {
-    encode_kv_macaddr(state->nb, "mac_broadcast", mnl_attr_get_payload(tb));
+    encode_kv_operstate(state->nb, name, mnl_attr_get_u32(tb));
     return MNL_CB_OK;
 }
-static int ifla_encode_link(struct encode_state *state, const struct nlattr *tb)
+static int nlattr_encode_stats(struct encode_state *state, const char *name, const struct nlattr *tb)
 {
-    encode_kv_ulong(state->nb, "link", mnl_attr_get_u32(tb));
-    return MNL_CB_OK;
-}
-static int ifla_encode_operstate(struct encode_state *state, const struct nlattr *tb)
-{
-    encode_kv_operstate(state->nb, mnl_attr_get_u32(tb));
-    return MNL_CB_OK;
-}
-static int ifla_encode_stats(struct encode_state *state, const struct nlattr *tb)
-{
-    encode_kv_stats(state->nb, "stats", tb);
+    encode_kv_stats(state->nb, name, tb);
     return MNL_CB_OK;
 }
 #ifdef DECODE_AF_SPEC
-static int ifla_encode_af_spec(struct encode_state *state, const struct nlattr *tb)
+static int nlattr_encode_af_spec(struct encode_state *state, const char *name, const struct nlattr *tb)
 {
     struct netif *nb = state->nb;
 
-    ei_encode_atom(nb->resp, &nb->resp_index, "ifla_af_spec");
+    ei_encode_atom(nb->resp, &nb->resp_index, name);
 
     int map_count_index = nb->resp_index;
     ei_encode_map_header(nb->resp, &nb->resp_index, 0);
@@ -232,18 +226,22 @@ static int ifla_encode_af_spec(struct encode_state *state, const struct nlattr *
 }
 #endif
 
-typedef int (*ifla_encoder)(struct encode_state *state, const struct nlattr *tb);
+typedef int (*nlattr_encoder)(struct encode_state *state, const char *key, const struct nlattr *tb);
+struct nlattr_encoder_info {
+    const char *name;
+    nlattr_encoder encoder;
+};
 
-static ifla_encoder ifla_encoders[IFLA_MAX + 1] = {
-    [IFLA_MTU] = ifla_encode_mtu,
-    [IFLA_IFNAME] = ifla_encode_ifname,
-    [IFLA_ADDRESS] = ifla_encode_address,
-    [IFLA_BROADCAST] = ifla_encode_broadcast,
-    [IFLA_LINK] = ifla_encode_link,
-    [IFLA_OPERSTATE] = ifla_encode_operstate,
-    [IFLA_STATS] = ifla_encode_stats,
+static const struct nlattr_encoder_info ifla_encoders[IFLA_MAX + 1] = {
+    [IFLA_MTU] = {"mtu", nlattr_encode_ulong},
+    [IFLA_IFNAME] = {"ifname", nlattr_encode_string},
+    [IFLA_ADDRESS] = {"mac_address", nlattr_encode_macaddr},
+    [IFLA_BROADCAST] = {"mac_broadcast", nlattr_encode_macaddr},
+    [IFLA_LINK] = {"link", nlattr_encode_ulong},
+    [IFLA_OPERSTATE] = {"operstate", nlattr_encode_operstate},
+    [IFLA_STATS] = {"stats", nlattr_encode_stats},
     #ifdef DECODE_AF_SPEC
-    [IFLA_AF_SPEC] = ifla_encode_af_spec,
+    [IFLA_AF_SPEC] = {"af_spec", ifla_encode_af_spec},
     #endif
 };
 
@@ -255,61 +253,72 @@ static int encode_rtm_link_attrs(const struct nlattr *attr, void *data)
     int rc = MNL_CB_OK;
 
     // Handle known attributes
-    if (mnl_attr_type_valid(attr, IFLA_MAX) >= 0 && ifla_encoders[type]) {
+    const struct nlattr_encoder_info *info = &ifla_encoders[type];
+    if (mnl_attr_type_valid(attr, IFLA_MAX) >= 0 && info->name) {
         encode_state_incr(state);
-        rc = ifla_encoders[type](state, attr);
+        rc = info->encoder(state, info->name, attr);
     }
 
     return rc;
 }
 
-static int ifa_encode_address(struct encode_state *state, const struct nlattr *tb)
+static int nlattr_encode_ipaddress(struct encode_state *state, const char *name, const struct nlattr *tb)
 {
-    encode_kv_ipaddress(state->nb, "address", state->af_family, mnl_attr_get_payload(tb));
-    return MNL_CB_OK;
-}
-static int ifa_encode_local(struct encode_state *state, const struct nlattr *tb)
-{
-    encode_kv_ipaddress(state->nb, "local", state->af_family, mnl_attr_get_payload(tb));
-    return MNL_CB_OK;
-}
-static int ifa_encode_label(struct encode_state *state, const struct nlattr *tb)
-{
-    encode_kv_string(state->nb, "label", mnl_attr_get_str(tb));
-    return MNL_CB_OK;
-}
-static int ifa_encode_broadcast(struct encode_state *state, const struct nlattr *tb)
-{
-    encode_kv_ipaddress(state->nb, "broadcast", state->af_family, mnl_attr_get_payload(tb));
-    return MNL_CB_OK;
-}
-static int ifa_encode_anycast(struct encode_state *state, const struct nlattr *tb)
-{
-    encode_kv_ipaddress(state->nb, "anycast", state->af_family, mnl_attr_get_payload(tb));
+    encode_kv_ipaddress(state->nb, name, state->af_family, mnl_attr_get_payload(tb));
     return MNL_CB_OK;
 }
 
-static ifla_encoder ifa_encoders[IFA_MAX + 1] = {
-    [IFA_ADDRESS] = ifa_encode_address,
-    [IFA_LOCAL] = ifa_encode_local,
-    [IFA_LABEL] = ifa_encode_label,
-    [IFA_BROADCAST] = ifa_encode_broadcast,
-    [IFA_ANYCAST] = ifa_encode_anycast,
-    //[IFA_CACHEINFO] = ifa_encode_cacheinfo,
-    //[IFA_MULTICAST] = ifa_encode_multicast,
-    //[IFA_FLAGS] = ifa_encode_flags
+static const struct nlattr_encoder_info ifa_encoders[IFA_MAX + 1] = {
+    [IFA_ADDRESS] = {"address", nlattr_encode_ipaddress},
+    [IFA_LOCAL] = {"local", nlattr_encode_ipaddress},
+    [IFA_LABEL] = {"label", nlattr_encode_string},
+    [IFA_BROADCAST] = {"broadcast", nlattr_encode_ipaddress},
+    [IFA_ANYCAST] = {"anycast", nlattr_encode_ipaddress},
+    //[IFA_CACHEINFO] = {"cacheinfo", nlattr_encode_operstate},
+    //[IFA_MULTICAST] = {"multicast", nlattr_encode_stats},
+    //[IFA_FLAGS] = {"flags", ifla_encode_ulong},
 };
 
 static int encode_rtm_addr_attrs(const struct nlattr *attr, void *data)
 {
     struct encode_state *state = data;
-    int type = mnl_attr_get_type(attr);
+    uint16_t type = mnl_attr_get_type(attr);
     int rc = MNL_CB_OK;
 
     // Handle known attributes
-    if (mnl_attr_type_valid(attr, IFA_MAX) >= 0 && ifa_encoders[type]) {
+    const struct nlattr_encoder_info *info = &ifa_encoders[type];
+    if (mnl_attr_type_valid(attr, IFA_MAX) >= 0 && info->name) {
         encode_state_incr(state);
-        rc = ifa_encoders[type](state, attr);
+        rc = info->encoder(state, info->name, attr);
+    }
+
+    return rc;
+}
+
+static const struct nlattr_encoder_info rta_encoders[RTA_MAX + 1] = {
+    [RTA_DST] = {"dst", nlattr_encode_ipaddress},
+    [RTA_SRC] = {"src", nlattr_encode_ipaddress},
+    [RTA_IIF] = {"iif", nlattr_encode_ulong},
+    [RTA_OIF] = {"oif", nlattr_encode_ulong},
+    [RTA_GATEWAY] = {"gateway", nlattr_encode_ipaddress},
+    //[RTA_PRIORITY] = {"priority", nlattr_encode_ulong},
+    //[RTA_PREFSRC] = {"prefsrc", nlattr_encode_ipaddress},
+    //[RTA_METRICS] = {"metrics", ifla_encode_ulong},
+    //[RTA_MULTIPATH] = {"multipath", ?ifla_encode_ulong},
+    //[RTA_FLOW] = {"xresolve", ?ifla_encode_ulong},
+};
+
+static int encode_rtm_route_attrs(const struct nlattr *attr, void *data)
+{
+    struct encode_state *state = data;
+    uint16_t type = mnl_attr_get_type(attr);
+    int rc = MNL_CB_OK;
+
+    // Handle known attributes
+    const struct nlattr_encoder_info *info = &rta_encoders[type];
+    if (mnl_attr_type_valid(attr, RTA_MAX) >= 0 && info->name) {
+        encode_state_incr(state);
+        rc = info->encoder(state, info->name, attr);
     }
 
     return rc;
@@ -416,6 +425,31 @@ static int netif_encode_rtnetlink(const struct nlmsghdr *nlh, void *data)
         state->count[state->level] += 4;
         cb = encode_rtm_addr_attrs;
         offset = sizeof(struct ifaddrmsg);
+        break;
+    }
+
+    case RTM_NEWROUTE:
+    case RTM_DELROUTE:
+    {
+
+        const struct rtmsg *rtm = mnl_nlmsg_get_payload(nlh);
+        debug("RTM_NEWROUTE/DELROUTE: family=%s, dst_len=%d, src_len=%d, tos=%d, table=%d, protocol=%d, scope=%d, type=%d, flags=%d\n",
+                ifa_family_to_string(rtm->rtm_family),
+                rtm->rtm_dst_len,
+                rtm->rtm_src_len,
+                rtm->rtm_tos,
+                rtm->rtm_table,
+              rtm->rtm_protocol,
+              rtm->rtm_scope,
+              rtm->rtm_type,
+              rtm->rtm_flags);
+
+//        encode_kv_long(nb, "index", rtm->ifa_index);
+
+        state->af_family = rtm->rtm_family;
+        state->count[state->level] += 0;
+        cb = encode_rtm_route_attrs;
+        offset = sizeof(struct rtmsg);
         break;
     }
 

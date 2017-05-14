@@ -29,6 +29,7 @@
 #include <linux/if.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/wireless.h>
 #include <libmnl/libmnl.h>
 
 // In Ubuntu 16.04, it seems that the new compat logic handling is preventing
@@ -235,6 +236,42 @@ static int nlattr_encode_af_spec(struct encode_state *state, const char *name, c
     return rc;
 }
 #endif
+static int nlattr_encode_wireless(struct encode_state *state, const char *name, const struct nlattr *tb)
+{
+    struct iw_event *iw = mnl_attr_get_payload(tb);
+    uint16_t iw_len = mnl_attr_get_payload_len(tb);
+
+    if (iw->len > iw_len) {
+        debug("wireless len longer than expected: %d vs %d", iw->len, iw_len);
+
+        // Ignore -> maybe a weird WiFi driver issue?
+        encode_kv_atom(state->nb, name, "error");
+        return MNL_CB_OK;
+    }
+
+    // Encode ioctl with value as a tuple.
+    ei_encode_atom(state->nb->resp, &state->nb->resp_index, name);
+    ei_encode_tuple_header(state->nb->resp, &state->nb->resp_index, 2);
+    switch (iw->cmd) {
+    case SIOCGIWSCAN: /* get scanning results */
+        encode_kv_binary(state->nb, "siocgiwscan", &iw->u, iw->len - 4);
+        break;
+
+    case SIOCGIWAP:   /* get access point MAC addresses */
+        encode_kv_macaddr(state->nb, "siocgiwap", (unsigned char *) iw->u.ap_addr.sa_data);
+        break;
+
+    case IWEVASSOCRESPIE:
+        encode_kv_binary(state->nb, "iwevassocrespie", &iw->u, iw->len - 4);
+        break;
+
+    default:
+        debug("wireless: unhandled ioctl 0x%04x", iw->cmd);
+        ei_encode_ulong(state->nb->resp, &state->nb->resp_index, iw->cmd);
+        ei_encode_binary(state->nb->resp, &state->nb->resp_index, &iw->u, iw->len - 4);
+    }
+    return MNL_CB_OK;
+}
 
 typedef int (*nlattr_encoder)(struct encode_state *state, const char *key, const struct nlattr *tb);
 struct nlattr_encoder_info {
@@ -253,6 +290,7 @@ static const struct nlattr_encoder_info ifla_encoders[IFLA_MAX + 1] = {
 #ifdef DECODE_AF_SPEC
     [IFLA_AF_SPEC] = {"af_spec", ifla_encode_af_spec},
 #endif
+    [IFLA_WIRELESS] = {"wireless", nlattr_encode_wireless},
 };
 
 static int encode_rtm_link_attrs(const struct nlattr *attr, void *data)

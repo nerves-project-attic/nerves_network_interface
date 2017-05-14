@@ -71,6 +71,11 @@ void encode_kv_string(struct netif *nb, const char *key, const char *str)
     ei_encode_atom(nb->resp, &nb->resp_index, key);
     encode_string(nb->resp, &nb->resp_index, str);
 }
+void encode_kv_binary(struct netif *nb, const char *key, const void *buffer, size_t len)
+{
+    ei_encode_atom(nb->resp, &nb->resp_index, key);
+    ei_encode_binary(nb->resp, &nb->resp_index, buffer, len);
+}
 void encode_kv_atom(struct netif *nb, const char *key, const char *str)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, key);
@@ -164,3 +169,4 @@ void fprintf_nested(FILE *fd, const struct nlattr *attr)
     fprintf(fd, "----------------\t------------------\n");
 }
 #endif
+

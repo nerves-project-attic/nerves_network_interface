@@ -71,8 +71,10 @@ defmodule Nerves.NetworkInterface.Worker do
     {:reply, response, state }
   end
   def handle_call({:status, ifname}, _from, state) do
-    response = call_port(state, :status, ifname)
-    {:reply, response, state }
+    :ok = call_port(state, :status, ifname)
+    #:ok = call_port(state, :dump_addrs, ifname)
+    #:ok = call_port(state, :dump_addrs6, ifname)
+    {:reply, :ok, state }
   end
   def handle_call({:ifup, ifname}, _from, state) do
     response = call_port(state, :ifup, ifname)

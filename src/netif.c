@@ -82,40 +82,6 @@ static void send_response(struct netif *nb)
     nb->resp_index = 0;
 }
 
-static void handle_async_response(struct netif *nb, int bytecount)
-{
-    nb->response_callback(nb, bytecount);
-    nb->response_callback = NULL;
-    nb->response_error_callback = NULL;
-}
-
-static void handle_async_response_error(struct netif *nb, int err)
-{
-    nb->response_error_callback(nb, err);
-    nb->response_callback = NULL;
-    nb->response_error_callback = NULL;
-}
-
-static void nl_route_process(struct netif *nb)
-{
-    int bytecount = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
-    if (bytecount <= 0)
-        err(EXIT_FAILURE, "mnl_socket_recvfrom");
-
-    // Check if there's an async response on the saved sequence number and port id.
-    // If not or if the message is not expected, then it's a notification.
-    if (nb->response_callback != NULL) {
-        int rc = mnl_cb_run(nb->nlbuf, bytecount, nb->response_seq, nb->response_portid, NULL, NULL);
-        if (rc == MNL_CB_OK)
-            handle_async_response(nb, bytecount);
-        else if (rc == MNL_CB_ERROR && errno != ESRCH && errno != EPROTO)
-            handle_async_response_error(nb, errno);
-        else
-            handle_rtnetlink_notification(nb, bytecount);
-    } else
-        handle_rtnetlink_notification(nb, bytecount);
-}
-
 static void netif_handle_interfaces(struct netif *nb)
 {
     struct if_nameindex *if_ni = if_nameindex();
@@ -137,17 +103,88 @@ static void netif_handle_interfaces(struct netif *nb)
     send_response(nb);
 }
 
-static void netif_handle_status(struct netif *nb,
-                                    const char *ifname)
+static void rtnetlink_dump_links(struct netif *nb)
 {
     struct nlmsghdr *nlh;
     struct ifinfomsg *ifi;
-    unsigned int seq;
+
+    nlh = mnl_nlmsg_put_header(nb->nlbuf);
+    nlh->nlmsg_type	= RTM_GETLINK;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    nlh->nlmsg_seq = nb->seq++;
+
+    ifi = mnl_nlmsg_put_extra_header(nlh, sizeof(struct ifinfomsg));
+    ifi->ifi_family = AF_UNSPEC;
+    ifi->ifi_type = ARPHRD_ETHER;
+    ifi->ifi_index = 0;
+    ifi->ifi_flags = 0;
+    ifi->ifi_change = 0xffffffff;
+
+    if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0) {
+        if (errno == EBUSY)
+            nb->dump_interfaces = true;
+        else
+            err(EXIT_FAILURE, "mnl_socket_send(rtnetlink_dump_links)");
+    }
+}
+
+static void rtnetlink_dump_addrs(struct netif *nb, unsigned char family)
+{
+    struct nlmsghdr *nlh;
+    struct rtgenmsg *rt;
+
+    nlh = mnl_nlmsg_put_header(nb->nlbuf);
+    nlh->nlmsg_type	= RTM_GETADDR;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    nlh->nlmsg_seq = nb->seq++;
+    rt = mnl_nlmsg_put_extra_header(nlh, sizeof(struct rtgenmsg));
+    rt->rtgen_family = family; ;
+
+    if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0) {
+        if (errno == EBUSY) {
+            if (family == AF_INET)
+                nb->dump_addresses = true;
+            else
+                nb->dump_addresses6 = true;
+        } else
+            err(EXIT_FAILURE, "mnl_socket_send(rtnetlink_dump_addrs)");
+    }
+}
+
+static void rtnetlink_dump_routes(struct netif *nb, unsigned char family)
+{
+    struct nlmsghdr *nlh;
+    struct rtmsg *rtm;
+
+    nlh = mnl_nlmsg_put_header(nb->nlbuf);
+    nlh->nlmsg_type	= RTM_GETROUTE;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    nlh->nlmsg_seq = nb->seq++;
+    rtm = mnl_nlmsg_put_extra_header(nlh, sizeof(struct rtmsg));
+    rtm->rtm_family = family; ;
+
+    if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0) {
+        if (errno == EBUSY) {
+            if (family == AF_INET)
+                nb->dump_routes = true;
+            else
+                nb->dump_routes6 = true;
+        } else
+            err(EXIT_FAILURE, "mnl_socket_send(rtnetlink_dump_routes)");
+    }
+}
+
+static void netif_handle_status(struct netif *nb,
+                                const char *ifname)
+{
+#if 0
+    struct nlmsghdr *nlh;
+    struct ifinfomsg *ifi;
 
     nlh = mnl_nlmsg_put_header(nb->nlbuf);
     nlh->nlmsg_type = RTM_GETLINK;
     nlh->nlmsg_flags = NLM_F_REQUEST;
-    nlh->nlmsg_seq = seq = nb->seq++;
+    nlh->nlmsg_seq = nb->seq++;
 
     ifi = mnl_nlmsg_put_extra_header(nlh, sizeof(struct ifinfomsg));
     ifi->ifi_family = AF_UNSPEC;
@@ -160,10 +197,45 @@ static void netif_handle_status(struct netif *nb,
 
     if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0)
         err(EXIT_FAILURE, "mnl_socket_send");
+#endif
+    rtnetlink_dump_links(nb);
+    nb->dump_addresses = true;
+    nb->dump_addresses6 = true;
+    nb->dump_routes = true;
+    nb->dump_routes6 = true;
 
     start_response(nb);
     ei_encode_atom(nb->resp, &nb->resp_index, "ok");
     send_response(nb);
+}
+
+static void nl_route_process(struct netif *nb)
+{
+    int bytecount = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
+    if (bytecount <= 0)
+        err(EXIT_FAILURE, "mnl_socket_recvfrom");
+
+    int rc = handle_rtnetlink_notification(nb, bytecount);
+
+    if (rc == MNL_CB_STOP) {
+        // MNL_CB_STOP is notified at the end of each dump... call
+        if (nb->dump_interfaces) {
+            nb->dump_interfaces = false;
+            rtnetlink_dump_links(nb);
+        } else if (nb->dump_addresses) {
+            nb->dump_addresses = false;
+            rtnetlink_dump_addrs(nb, AF_INET);
+        } else if (nb->dump_addresses6) {
+            nb->dump_addresses6 = false;
+            rtnetlink_dump_addrs(nb, AF_INET6);
+        } else if (nb->dump_routes) {
+            nb->dump_routes = false;
+            rtnetlink_dump_routes(nb, AF_INET);
+        } else if (nb->dump_routes6) {
+            nb->dump_routes6 = false;
+            rtnetlink_dump_routes(nb, AF_INET6);
+        }
+    }
 }
 
 static void netif_set_ifflags(struct netif *nb,

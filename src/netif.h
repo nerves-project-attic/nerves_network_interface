@@ -2,6 +2,8 @@
 #define NETIF_H
 
 #include <libmnl/libmnl.h>
+#include <stdbool.h>
+
 #include "erlcmd.h"
 
 struct netif {
@@ -26,11 +28,12 @@ struct netif {
     char resp[ERLCMD_BUF_SIZE];
     int resp_index;
 
-    // Async response handling
-    void (*response_callback)(struct netif *nb, int bytecount);
-    void (*response_error_callback)(struct netif *nb, int err);
-    unsigned int response_portid;
-    int response_seq;
+    // Deferred requests
+    bool dump_interfaces;
+    bool dump_addresses;
+    bool dump_addresses6;
+    bool dump_routes;
+    bool dump_routes6;
 
     // Holder of the most recently encounted errno.
     int last_error;

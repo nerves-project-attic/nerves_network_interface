@@ -575,8 +575,10 @@ static int netif_encode_rtnetlink(const struct nlmsghdr *nlh, void *data)
     return MNL_CB_OK;
 }
 
-void handle_rtnetlink_notification(struct netif *nb, int bytecount)
+int handle_rtnetlink_notification(struct netif *nb, int bytecount)
 {
+    debug("handle_rtnetlink_notification %d bytes", bytecount);
+
     // Create the notification
     nb->resp_index = sizeof(uint16_t); // Skip over payload size
     nb->resp[nb->resp_index++] = 'n';
@@ -595,11 +597,19 @@ void handle_rtnetlink_notification(struct netif *nb, int bytecount)
     debug("}mnl_nlmsg_fprintf\n");
 #endif
 
-    if (mnl_cb_run(nb->nlbuf, bytecount, 0, 0, netif_encode_rtnetlink, &state) <= 0)
-        err(EXIT_FAILURE, "mnl_cb_run");
+    int rc = mnl_cb_run(nb->nlbuf, bytecount, 0, 0, netif_encode_rtnetlink, &state);
+    if (rc == MNL_CB_STOP)
+        warnx("mnl_cb_run stopped");
+    else if (rc == MNL_CB_ERROR)
+        warn("mnl_cb_run(handle_rtnetlink_notification)");
 
-    nb->resp[nb->resp_index++] = ERL_NIL_EXT; // One would think there's be an ei_encode_nil..
-    ei_encode_list_header(nb->resp, &list_index, state.count[0]);
+    // Only send the notification if there's something in the list.
+    if (state.count[0] > 0) {
+        nb->resp[nb->resp_index++] = ERL_NIL_EXT; // One would think there's be an ei_encode_nil..
+        ei_encode_list_header(nb->resp, &list_index, state.count[0]);
 
-    erlcmd_send(nb->resp, nb->resp_index);
+        erlcmd_send(nb->resp, nb->resp_index);
+    }
+
+    return rc;
 }

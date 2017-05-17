@@ -17,11 +17,13 @@ defmodule Nerves.NetworkInterface.Worker do
   require Logger
 
   alias SystemRegistry, as: SR
+  alias Nerves.NetworkInterface.Rtnetlink
 
   @moduledoc false
 
   defstruct port: nil,
-            requests: []
+            requests: [],
+            interfaces: []
 
   def start_link() do
     GenServer.start_link(__MODULE__, [], name: __MODULE__)
@@ -88,34 +90,15 @@ defmodule Nerves.NetworkInterface.Worker do
   end
 
   def handle_info({_, {:data, <<?n, message::binary>>}}, state) do
-    data = :erlang.binary_to_term(message)
-    Logger.info "nerves_network_interface received #{inspect data}"
-    #doit(notif, data)
+    msg = :erlang.binary_to_term(message)
+    Logger.info "nerves_network_interface received #{inspect msg}"
+    {:ok, t, interfaces} = Rtnetlink.decode(msg, state.interfaces)
+    SR.commit(t)
+    {:noreply, %{state | interfaces: interfaces}}
 
-    {:noreply, state}
   end
   def handle_info({_, {:exit_status, _}}, state) do
     {:stop, :unexpected_exit, state}
-  end
-
-  defp doit(:ifremoved, data) do
-    Logger.info("Justin, I am running SR.delete on #{data.index}!!!")
-    SR.delete([:state, :network_interface, data.index])
-  end
-  defp doit(_, data) do
-    SR.transaction
-    |> SR.update([:state, :network_interface, data.index, :name], data.ifname)
-    |> SR.update([:state, :network_interface, data.index, :addresses, 0, :address], Map.get(data, :ipv4_address, "192.168.1.2"))
-    |> SR.update([:state, :network_interface, data.index, :addresses, 0, :netmask], Map.get(data, :ipv4_broadcast, "255.255.255.0"))
-    |> SR.update([:state, :network_interface, data.index, :mac_address], Map.get(data, :mac_address))
-    |> SR.update([:state, :network_interface, data.index, :mac_broadcast], Map.get(data, :mac_broadcast))
-    |> SR.update([:state, :network_interface, data.index, :is_broadcast], Map.get(data, :is_broadcast))
-    |> SR.update([:state, :network_interface, data.index, :is_lower_up], Map.get(data, :is_lower_up))
-    |> SR.update([:state, :network_interface, data.index, :is_multicast], Map.get(data, :is_multicast))
-    |> SR.update([:state, :network_interface, data.index, :is_running], Map.get(data, :is_running))
-    |> SR.update([:state, :network_interface, data.index, :is_up], Map.get(data, :is_up))
-    |> SR.update([:state, :network_interface, data.index, :type], Map.get(data, :type))
-    |> SR.commit
   end
 
   # Private helper functions

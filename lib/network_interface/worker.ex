@@ -31,12 +31,8 @@ defmodule Nerves.NetworkInterface.Worker do
     GenServer.cast(__MODULE__, :stop)
   end
 
-  def interfaces() do
-    GenServer.call(__MODULE__, :interfaces)
-  end
-
-  def status(ifname) do
-    GenServer.call(__MODULE__, {:status, ifname})
+  def refresh() do
+    GenServer.call(__MODULE__, :refresh)
   end
 
   def ifup(ifname) do
@@ -66,15 +62,9 @@ defmodule Nerves.NetworkInterface.Worker do
     { :ok, %Nerves.NetworkInterface.Worker{port: port} }
   end
 
-  def handle_call(:interfaces, _from, state) do
-    response = call_port(state, :interfaces, [])
+  def handle_call(:refresh, _from, state) do
+    response = call_port(state, :refresh, [])
     {:reply, response, state }
-  end
-  def handle_call({:status, ifname}, _from, state) do
-    :ok = call_port(state, :status, ifname)
-    #:ok = call_port(state, :dump_addrs, ifname)
-    #:ok = call_port(state, :dump_addrs6, ifname)
-    {:reply, :ok, state }
   end
   def handle_call({:ifup, ifname}, _from, state) do
     response = call_port(state, :ifup, ifname)

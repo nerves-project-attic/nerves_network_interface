@@ -82,27 +82,6 @@ static void send_response(struct netif *nb)
     nb->resp_index = 0;
 }
 
-static void netif_handle_interfaces(struct netif *nb)
-{
-    struct if_nameindex *if_ni = if_nameindex();
-    if (if_ni == NULL)
-        err(EXIT_FAILURE, "if_nameindex");
-
-    start_response(nb);
-    for (struct if_nameindex *i = if_ni;
-         ! (i->if_index == 0 && i->if_name == NULL);
-         i++) {
-        debug("Found interface %s.", i->if_name);
-        ei_encode_list_header(nb->resp, &nb->resp_index, 1);
-        encode_string(nb->resp, &nb->resp_index, i->if_name);
-    }
-
-    if_freenameindex(if_ni);
-
-    ei_encode_empty_list(nb->resp, &nb->resp_index);
-    send_response(nb);
-}
-
 static void rtnetlink_dump_links(struct netif *nb)
 {
     struct nlmsghdr *nlh;
@@ -174,31 +153,13 @@ static void rtnetlink_dump_routes(struct netif *nb, unsigned char family)
     }
 }
 
-static void netif_handle_status(struct netif *nb,
-                                const char *ifname)
+static void netif_handle_refresh(struct netif *nb)
 {
-#if 0
-    struct nlmsghdr *nlh;
-    struct ifinfomsg *ifi;
-
-    nlh = mnl_nlmsg_put_header(nb->nlbuf);
-    nlh->nlmsg_type = RTM_GETLINK;
-    nlh->nlmsg_flags = NLM_F_REQUEST;
-    nlh->nlmsg_seq = nb->seq++;
-
-    ifi = mnl_nlmsg_put_extra_header(nlh, sizeof(struct ifinfomsg));
-    ifi->ifi_family = AF_UNSPEC;
-    ifi->ifi_type = ARPHRD_ETHER;
-    ifi->ifi_index = 0;
-    ifi->ifi_flags = 0;
-    ifi->ifi_change = 0xffffffff;
-
-    mnl_attr_put_str(nlh, IFLA_IFNAME, ifname);
-
-    if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0)
-        err(EXIT_FAILURE, "mnl_socket_send");
-#endif
+    // On a refresh, send requests to rtnetlink to dump everything.
+    // Since the commands can't go out all at once, start dumping links
+    // and then dump everything else.
     rtnetlink_dump_links(nb);
+
     nb->dump_addresses = true;
     nb->dump_addresses6 = true;
     nb->dump_routes = true;
@@ -377,14 +338,9 @@ static void netif_request_handler(const char *req, void *cookie)
     if (ei_decode_atom(nb->req, &nb->req_index, cmd) < 0)
         errx(EXIT_FAILURE, "expecting command atom");
 
-    if (strcmp(cmd, "interfaces") == 0) {
-        debug("interfaces");
-        netif_handle_interfaces(nb);
-    } else if (strcmp(cmd, "status") == 0) {
-        if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
-            errx(EXIT_FAILURE, "status requires ifname");
-        debug("ifinfo: %s", ifname);
-        netif_handle_status(nb, ifname);
+    if (strcmp(cmd, "refresh") == 0) {
+        debug("refresh");
+        netif_handle_refresh(nb);
     } else if (strcmp(cmd, "ifup") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "ifup requires ifname");

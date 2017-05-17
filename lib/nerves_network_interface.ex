@@ -55,7 +55,7 @@ defmodule Nerves.NetworkInterface do
 
   If the interface doesn't exist, `{:error, :enodev}` is returned.
   """
-  defdelegate status(ifname), to: Nerves.NetworkInterface.Worker
+  defdelegate refresh(), to: Nerves.NetworkInterface.Worker
 
   @doc """
   Bring the specified interface up.

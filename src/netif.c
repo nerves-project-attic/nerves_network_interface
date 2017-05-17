@@ -18,7 +18,6 @@
 #include "netif.h"
 #include "netif_rtnetlink.h"
 #include "netif_settings.h"
-#include "netif_uevent.h"
 #include "util.h"
 
 #include <err.h>
@@ -50,10 +49,6 @@ static void netif_init(struct netif *nb)
     if (!nb->nl_uevent)
         err(EXIT_FAILURE, "mnl_socket_open (NETLINK_KOBJECT_UEVENT)");
 
-    // There is one single group in kobject over netlink
-    if (mnl_socket_bind(nb->nl_uevent, (1<<0), MNL_SOCKET_AUTOPID) < 0)
-        err(EXIT_FAILURE, "mnl_socket_bind");
-
     nb->inet_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (nb->inet_fd < 0)
         err(EXIT_FAILURE, "socket");
@@ -64,7 +59,6 @@ static void netif_init(struct netif *nb)
 static void netif_cleanup(struct netif *nb)
 {
     mnl_socket_close(nb->nl);
-    mnl_socket_close(nb->nl_uevent);
     nb->nl = NULL;
 }
 
@@ -379,7 +373,7 @@ int main(int argc, char *argv[])
     erlcmd_init(&handler, netif_request_handler, &nb);
 
     for (;;) {
-        struct pollfd fdset[3];
+        struct pollfd fdset[2];
 
         fdset[0].fd = STDIN_FILENO;
         fdset[0].events = POLLIN;
@@ -389,11 +383,7 @@ int main(int argc, char *argv[])
         fdset[1].events = POLLIN;
         fdset[1].revents = 0;
 
-        fdset[2].fd = mnl_socket_get_fd(nb.nl_uevent);
-        fdset[2].events = POLLIN;
-        fdset[2].revents = 0;
-
-        int rc = poll(fdset, 3, -1);
+        int rc = poll(fdset, 2, -1);
         if (rc < 0) {
             // Retry if EINTR
             if (errno == EINTR)
@@ -406,8 +396,6 @@ int main(int argc, char *argv[])
             erlcmd_process(&handler);
         if (fdset[1].revents & (POLLIN | POLLHUP))
             nl_route_process(&nb);
-        if (fdset[2].revents & (POLLIN | POLLHUP))
-            nl_uevent_process(&nb);
     }
 
     netif_cleanup(&nb);

@@ -31,6 +31,13 @@ defmodule Nerves.NetworkInterface.Rtnetlink do
     {:ok, t, [iface | ifaces]}
   end
 
+  def decode(%T{} = t, {:dellink, msg}, ifaces) do
+    iface = msg
+    {_, ifaces} = iface(ifaces, msg.index)
+    t = SR.delete(t, [:state, :network_interface, iface.ifname])
+    {:ok, t, ifaces}
+  end
+
   @doc """
   Convert newaddr notifications into updates.
   """

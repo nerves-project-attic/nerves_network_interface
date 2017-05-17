@@ -93,7 +93,9 @@ defmodule Nerves.NetworkInterface.Worker do
     msg = :erlang.binary_to_term(message)
     Logger.info "nerves_network_interface received #{inspect msg}"
     {:ok, t, interfaces} = Rtnetlink.decode(msg, state.interfaces)
-    SR.commit(t)
+    IO.inspect t, label: "T"
+    IO.inspect interfaces, label: "If"
+    SR.commit(t) |> IO.inspect
     {:noreply, %{state | interfaces: interfaces}}
 
   end

@@ -81,6 +81,8 @@ defmodule RtnetlinkTest do
   end
 
   test "dellink returns a system registry key to delete" do
-    # NEED TO GET A USB WIFI DONGLE TO CAPTURE MESSAGE: assert R.dellink()
+    ifaces = [%{ifname: "wlan0", index: 3}]
+    {:ok, t, _} = R.decode({:dellink, %{ifname: "wlan0", index: 3}}, ifaces)
+    assert Enum.any?(t.deletes, & &1.node == [:state, :network_interface, "wlan0"])
   end
 end

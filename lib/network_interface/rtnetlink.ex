@@ -22,13 +22,13 @@ defmodule Nerves.NetworkInterface.Rtnetlink do
   Convert newlink notifications into updates.
   """
   def decode(%T{} = t, {:newlink, msg}, ifaces) do
-    iface = msg
-    {_, ifaces} =
-      iface(ifaces, iface.index)
+    {iface, ifaces} =
+      case iface(ifaces, msg.index) do
+        {[iface], ifaces} -> {iface, ifaces}
+        {_, ifaces} -> {msg, ifaces}
+      end
+    new(t, msg, iface, ifaces)
 
-
-    t = SR.update(t, [:state, :network_interface, iface.ifname], iface)
-    {:ok, t, [iface | ifaces]}
   end
 
   def decode(%T{} = t, {:dellink, msg}, ifaces) do
@@ -107,6 +107,20 @@ defmodule Nerves.NetworkInterface.Rtnetlink do
   end
 
   def decode(t, _, ifaces), do: {:noop, t, ifaces}
+
+  # Interface was moved
+  defp new(t, %{ifname: new_name, index: index} = new, %{ifname: old_name, index: index}, ifaces)
+    when old_name != new_name do
+    t
+    |> SR.move([:state, :network_interface, old_name], [:state, :network_interface, new_name])
+    |> new(new, %{}, ifaces)
+  end
+
+  defp new(t, new, _old, ifaces) do
+    t = t
+    |> SR.update([:state, :network_interface, new.ifname], new)
+    {:ok, t, [new | ifaces]}
+  end
 
   defp iface(ifaces, ifindex),
     do: Enum.split_with(ifaces, & &1.index == ifindex)

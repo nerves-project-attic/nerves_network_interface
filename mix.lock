@@ -1,4 +1,4 @@
 %{"earmark": {:hex, :earmark, "1.2.2", "f718159d6b65068e8daeef709ccddae5f7fdc770707d82e7d126f584cd925b74", [:mix], []},
   "elixir_make": {:hex, :elixir_make, "0.4.0", "992f38fabe705bb45821a728f20914c554b276838433349d4f2341f7a687cddf", [:mix], []},
   "ex_doc": {:hex, :ex_doc, "0.15.1", "d5f9d588fd802152516fccfdb96d6073753f77314fcfee892b15b6724ca0d596", [:mix], [{:earmark, "~> 1.1", [hex: :earmark, optional: false]}]},
-  "system_registry": {:hex, :system_registry, "0.1.2", "b6dba36c575786f1848e18a1155a2b6bd82f607f0ae9dc88185d6b7dc3fcdf60", [:mix], []}}
+  "system_registry": {:git, "https://github.com/mobileoverlord/system_registry.git", "d742032a068223bbd7583f15a4d077665c283b5e", []}}

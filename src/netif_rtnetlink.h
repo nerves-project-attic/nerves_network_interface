@@ -22,5 +22,6 @@ struct netif;
 struct nlmsghdr;
 
 int handle_rtnetlink_notification(struct netif *nb, int bytecount);
+int send_rtnetlink_message(struct netif *nb);
 
 #endif // NETIF_RTNETLINK_H

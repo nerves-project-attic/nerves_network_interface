@@ -35,11 +35,6 @@ defmodule Nerves.NetworkInterface do
   """
 
   @doc """
-  Return the list of network interfaces on this machine.
-  """
-  defdelegate interfaces, to: Nerves.NetworkInterface.Worker
-
-  @doc """
   Return link-level status on the specified interface.
 
   For example, `Nerves.NetworkInterface.status pid, "eth0"` could return:

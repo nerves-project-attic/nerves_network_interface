@@ -311,6 +311,11 @@ static void netif_handle_set(struct netif *nb,
     send_response(nb);
 }
 
+static void netif_handle_send(struct netif *nb)
+{
+    send_rtnetlink_message(nb);
+}
+
 static void netif_request_handler(const char *req, void *cookie)
 {
     struct netif *nb = (struct netif *) cookie;
@@ -335,6 +340,9 @@ static void netif_request_handler(const char *req, void *cookie)
     if (strcmp(cmd, "refresh") == 0) {
         debug("refresh");
         netif_handle_refresh(nb);
+    } else if (strcmp(cmd, "send") == 0) {
+        debug("send");
+        netif_handle_send(nb);
     } else if (strcmp(cmd, "ifup") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
             errx(EXIT_FAILURE, "ifup requires ifname");

@@ -37,23 +37,8 @@ defmodule Nerves.NetworkInterface.Worker do
     GenServer.call(__MODULE__, :refresh)
   end
 
-  def ifup(ifname) do
-    GenServer.call(__MODULE__, {:ifup, ifname})
-  end
-
-  def ifdown(ifname) do
-    GenServer.call(__MODULE__, {:ifdown, ifname})
-  end
-
-  def settings(ifname) do
-    GenServer.call(__MODULE__, {:settings, ifname})
-  end
-
-  def setup(ifname, options) when is_list(options) do
-    setup(ifname, :maps.from_list(options))
-  end
-  def setup(ifname, options) when is_map(options) do
-    GenServer.call(__MODULE__, {:setup, ifname, options})
+  def send(msg) do
+    GenServer.call(__MODULE__, {:send, msg})
   end
 
   def init([]) do
@@ -68,20 +53,8 @@ defmodule Nerves.NetworkInterface.Worker do
     response = call_port(state, :refresh, [])
     {:reply, response, state }
   end
-  def handle_call({:ifup, ifname}, _from, state) do
-    response = call_port(state, :ifup, ifname)
-    {:reply, response, state }
-  end
-  def handle_call({:ifdown, ifname}, _from, state) do
-    response = call_port(state, :ifdown, ifname)
-    {:reply, response, state }
-  end
-  def handle_call({:setup, ifname, options}, _from, state) do
-    response = call_port(state, :setup, {ifname, options})
-    {:reply, response, state }
-  end
-  def handle_call({:settings, ifname}, _from, state) do
-    response = call_port(state, :settings, ifname)
+  def handle_call({:send, msg}, _from, state) do
+    response = call_port(state, :send, msg)
     {:reply, response, state }
   end
 

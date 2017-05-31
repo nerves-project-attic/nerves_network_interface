@@ -24,6 +24,7 @@
 #include <string.h>
 #include <err.h>
 
+#include <arpa/inet.h>
 #include <net/if.h>
 #include <net/if_arp.h>
 #include <linux/if.h>
@@ -53,6 +54,16 @@ struct encode_state
     // Holder for whether we're parsing an IPv4 or IPv6
     // Netlink message.
     int af_family;
+};
+
+struct nlattr_encoder_info;
+typedef int (*nlattr_encoder)(struct encode_state *state, const char *key, const struct nlattr *tb);
+typedef void (*nlattr_decoder)(const struct nlattr_encoder_info *info, struct netif *nb, struct nlmsghdr *nlh);
+struct nlattr_encoder_info {
+    unsigned int type;
+    const char *name;
+    nlattr_encoder encoder;
+    nlattr_decoder decoder;
 };
 
 static void encode_state_push(struct encode_state *state)
@@ -187,15 +198,40 @@ static int nlattr_encode_string(struct encode_state *state, const char *name, co
     encode_kv_string(state->nb, name, mnl_attr_get_str(tb));
     return MNL_CB_OK;
 }
+void nlattr_decode_string(const struct nlattr_encoder_info *info, struct netif *nb, struct nlmsghdr *nlh)
+{
+    char temp[128];
+    if (erlcmd_decode_string(nb->req, &nb->req_index, temp, sizeof(temp)) < 0)
+        errx(EXIT_FAILURE, "Expecting string for %s", info->name);
+    mnl_attr_put_strz(nlh, info->type, temp);
+}
 static int nlattr_encode_macaddr(struct encode_state *state, const char *name, const struct nlattr *tb)
 {
     encode_kv_macaddr(state->nb, name, mnl_attr_get_payload(tb));
     return MNL_CB_OK;
 }
+void nlattr_decode_macaddr(const struct nlattr_encoder_info *info, struct netif *nb, struct nlmsghdr *nlh)
+{
+    char temp[128];
+    unsigned char mac[6];
+
+    if (erlcmd_decode_string(nb->req, &nb->req_index, temp, sizeof(temp)) < 0 ||
+           string_to_macaddr(temp, mac) < 0)
+        errx(EXIT_FAILURE, "Expecting macaddr string for %s", info->name);
+
+    mnl_attr_put(nlh, info->type, sizeof(mac), mac);
+}
 static int nlattr_encode_ulong(struct encode_state *state, const char *name, const struct nlattr *tb)
 {
     encode_kv_ulong(state->nb, name, mnl_attr_get_u32(tb));
     return MNL_CB_OK;
+}
+void nlattr_decode_ulong(const struct nlattr_encoder_info *info, struct netif *nb, struct nlmsghdr *nlh)
+{
+    unsigned long temp;
+    if (ei_decode_ulong(nb->req, &nb->req_index, &temp) < 0)
+        errx(EXIT_FAILURE, "Expecting unsigned long for %s", info->name);
+    mnl_attr_put_u32(nlh, info->type, temp);
 }
 static int nlattr_encode_uchar(struct encode_state *state, const char *name, const struct nlattr *tb)
 {
@@ -217,6 +253,29 @@ static int nlattr_encode_ipaddress(struct encode_state *state, const char *name,
     encode_kv_ipaddress(state->nb, name, state->af_family, mnl_attr_get_payload(tb));
     return MNL_CB_OK;
 }
+void nlattr_decode_ipaddress(const struct nlattr_encoder_info *info, struct netif *nb, struct nlmsghdr *nlh)
+{
+    char ipaddr_str[INET_ADDRSTRLEN];
+    if (erlcmd_decode_string(nb->req, &nb->req_index, ipaddr_str, sizeof(ipaddr_str)) < 0)
+        errx(EXIT_FAILURE, "Expecting IP address string for %s", info->name);
+
+    // Try IPv4 conversion
+    struct in_addr ipv4addr;
+    if (inet_pton(AF_INET, ipaddr_str, &ipv4addr) > 0) {
+        mnl_attr_put(nlh, info->type, sizeof(ipv4addr), &ipv4addr);
+        return;
+    }
+
+    // If that didn't work, try IPv6 conversion
+    struct in6_addr ipv6addr;
+    if (inet_pton(AF_INET6, ipaddr_str, &ipv6addr) > 0) {
+        mnl_attr_put(nlh, info->type, sizeof(ipv6addr), &ipv6addr);
+        return;
+    }
+
+    errx(EXIT_FAILURE, "Couldn't convert '%s' to an IPv4 or IPv6 address", ipaddr_str);
+}
+
 #ifdef DECODE_AF_SPEC
 static int nlattr_encode_af_spec(struct encode_state *state, const char *name, const struct nlattr *tb)
 {
@@ -273,24 +332,69 @@ static int nlattr_encode_wireless(struct encode_state *state, const char *name, 
     return MNL_CB_OK;
 }
 
-typedef int (*nlattr_encoder)(struct encode_state *state, const char *key, const struct nlattr *tb);
-struct nlattr_encoder_info {
-    const char *name;
-    nlattr_encoder encoder;
-};
+const struct nlattr_encoder_info *nlattr_find_by_type(const struct nlattr_encoder_info *table, unsigned int type)
+{
+    const struct nlattr_encoder_info *info;
+    for (info = table;
+         info->name != NULL;
+         info++) {
+        if (info->type == type)
+            return info;
+    }
+    return info;
+}
+const struct nlattr_encoder_info *nlattr_find_by_name(const struct nlattr_encoder_info *table, const char *str)
+{
+    const struct nlattr_encoder_info *info;
+    for (info = table;
+         info->name != NULL;
+         info++) {
+        if (strcmp(info->name, str) == 0)
+            return info;
+    }
+    return info;
+}
 
-static const struct nlattr_encoder_info ifla_encoders[IFLA_MAX + 1] = {
-    [IFLA_MTU] = {"mtu", nlattr_encode_ulong},
-    [IFLA_IFNAME] = {"ifname", nlattr_encode_string},
-    [IFLA_ADDRESS] = {"mac_address", nlattr_encode_macaddr},
-    [IFLA_BROADCAST] = {"mac_broadcast", nlattr_encode_macaddr},
-    [IFLA_LINK] = {"link", nlattr_encode_ulong},
-    [IFLA_OPERSTATE] = {"operstate", nlattr_encode_operstate},
-    [IFLA_STATS] = {"stats", nlattr_encode_stats},
+static const struct nlattr_encoder_info ifla_encoders[] = {
+    { IFLA_MTU, "mtu", nlattr_encode_ulong, nlattr_decode_ulong},
+    { IFLA_IFNAME, "ifname", nlattr_encode_string, nlattr_decode_string},
+    { IFLA_ADDRESS, "mac_address", nlattr_encode_macaddr, nlattr_decode_macaddr},
+    { IFLA_BROADCAST, "mac_broadcast", nlattr_encode_macaddr, nlattr_decode_macaddr},
+    { IFLA_LINK, "link", nlattr_encode_ulong, nlattr_decode_ulong},
+    { IFLA_OPERSTATE, "operstate", nlattr_encode_operstate, NULL},
+    { IFLA_STATS, "stats", nlattr_encode_stats, NULL},
 #ifdef DECODE_AF_SPEC
-    [IFLA_AF_SPEC] = {"af_spec", ifla_encode_af_spec},
+    { IFLA_AF_SPEC, "af_spec", ifla_encode_af_spec, NULL},
 #endif
-    [IFLA_WIRELESS] = {"wireless", nlattr_encode_wireless},
+    { IFLA_WIRELESS, "wireless", nlattr_encode_wireless, NULL},
+    { 0, NULL, NULL, NULL }
+};
+static const struct nlattr_encoder_info ifa_encoders[] = {
+    { IFA_ADDRESS, "address", nlattr_encode_ipaddress, nlattr_decode_ipaddress},
+    { IFA_LOCAL, "local", nlattr_encode_ipaddress, nlattr_decode_ipaddress},
+    { IFA_LABEL, "label", nlattr_encode_string, nlattr_decode_string},
+    { IFA_BROADCAST, "broadcast", nlattr_encode_ipaddress, nlattr_decode_ipaddress},
+    { IFA_ANYCAST, "anycast", nlattr_encode_ipaddress, nlattr_decode_ipaddress},
+    //{ IFA_CACHEINFO, "cacheinfo", nlattr_encode_operstate},
+    //{ IFA_MULTICAST, "multicast", nlattr_encode_stats},
+    //{ IFA_FLAGS, "flags", ifla_encode_ulong},
+    { 0, NULL, NULL, NULL }
+};
+static const struct nlattr_encoder_info rta_encoders[] = {
+    { RTA_DST, "dst", nlattr_encode_ipaddress, nlattr_decode_ipaddress},
+    { RTA_SRC, "src", nlattr_encode_ipaddress, nlattr_decode_ipaddress},
+    { RTA_IIF, "iif", nlattr_encode_ulong, nlattr_decode_ulong},
+    { RTA_OIF, "oif", nlattr_encode_ulong, nlattr_decode_ulong},
+    { RTA_GATEWAY, "gateway", nlattr_encode_ipaddress, nlattr_decode_ipaddress},
+    { RTA_PRIORITY, "priority", nlattr_encode_ulong, nlattr_decode_ulong},
+    { RTA_PREFSRC, "prefsrc", nlattr_encode_ipaddress, nlattr_decode_ipaddress},
+    //{ RTA_TABLE, "table", nlattr_encode_ulong, nlattr_decode_ulong}, // In message header, so ignore here
+    { RTA_PREF, "pref", nlattr_encode_uchar, NULL},
+    { RTA_MARK, "mark", nlattr_encode_ulong, nlattr_decode_ulong},
+    //{ RTA_METRICS, "metrics", ifla_encode_ulong, nlattr_decode_ulong},
+    //{ RTA_MULTIPATH, "multipath", ?ifla_encode_ulong, nlattr_decode_ulong},
+    //{ RTA_FLOW, "xresolve", ?ifla_encode_ulong, nlattr_decode_ulong},
+    { 0, NULL, NULL, NULL }
 };
 
 static int encode_rtm_link_attrs(const struct nlattr *attr, void *data)
@@ -300,25 +404,25 @@ static int encode_rtm_link_attrs(const struct nlattr *attr, void *data)
     int rc = MNL_CB_OK;
 
     // Handle known attributes
-    const struct nlattr_encoder_info *info = &ifla_encoders[type];
-    if (mnl_attr_type_valid(attr, IFLA_MAX) >= 0 && info->name) {
+    const struct nlattr_encoder_info *info =
+            nlattr_find_by_type(ifla_encoders, type);
+    if (mnl_attr_type_valid(attr, IFLA_MAX) >= 0 && info->encoder) {
         encode_state_incr(state);
         rc = info->encoder(state, info->name, attr);
     }
 
     return rc;
 }
-
-static const struct nlattr_encoder_info ifa_encoders[IFA_MAX + 1] = {
-    [IFA_ADDRESS] = {"address", nlattr_encode_ipaddress},
-    [IFA_LOCAL] = {"local", nlattr_encode_ipaddress},
-    [IFA_LABEL] = {"label", nlattr_encode_string},
-    [IFA_BROADCAST] = {"broadcast", nlattr_encode_ipaddress},
-    [IFA_ANYCAST] = {"anycast", nlattr_encode_ipaddress},
-    //[IFA_CACHEINFO] = {"cacheinfo", nlattr_encode_operstate},
-    //[IFA_MULTICAST] = {"multicast", nlattr_encode_stats},
-    //[IFA_FLAGS] = {"flags", ifla_encode_ulong},
-};
+static void decode_rtm_link_attrs(struct netif *nb, const char *name, struct nlmsghdr *nlh)
+{
+    const struct nlattr_encoder_info *info =
+            nlattr_find_by_name(ifla_encoders, name);
+    if (info->decoder) {
+        info->decoder(info, nb, nlh);
+    } else {
+        errx(EXIT_FAILURE, "Can't find decoder for '%s'", name);
+    }
+}
 
 static int encode_rtm_addr_attrs(const struct nlattr *attr, void *data)
 {
@@ -327,30 +431,25 @@ static int encode_rtm_addr_attrs(const struct nlattr *attr, void *data)
     int rc = MNL_CB_OK;
 
     // Handle known attributes
-    const struct nlattr_encoder_info *info = &ifa_encoders[type];
-    if (mnl_attr_type_valid(attr, IFA_MAX) >= 0 && info->name) {
+    const struct nlattr_encoder_info *info =
+            nlattr_find_by_type(ifa_encoders, type);
+    if (mnl_attr_type_valid(attr, IFA_MAX) >= 0 && info->encoder) {
         encode_state_incr(state);
         rc = info->encoder(state, info->name, attr);
     }
 
     return rc;
 }
-
-static const struct nlattr_encoder_info rta_encoders[RTA_MAX + 1] = {
-    [RTA_DST] = {"dst", nlattr_encode_ipaddress},
-    [RTA_SRC] = {"src", nlattr_encode_ipaddress},
-    [RTA_IIF] = {"iif", nlattr_encode_ulong},
-    [RTA_OIF] = {"oif", nlattr_encode_ulong},
-    [RTA_GATEWAY] = {"gateway", nlattr_encode_ipaddress},
-    [RTA_PRIORITY] = {"priority", nlattr_encode_ulong},
-    [RTA_PREFSRC] = {"prefsrc", nlattr_encode_ipaddress},
-    //[RTA_TABLE] = {"table", nlattr_encode_ulong}, // In message header, so ignore here
-    [RTA_PREF] = {"pref", nlattr_encode_uchar},
-    [RTA_MARK] = {"mark", nlattr_encode_ulong},
-    //[RTA_METRICS] = {"metrics", ifla_encode_ulong},
-    //[RTA_MULTIPATH] = {"multipath", ?ifla_encode_ulong},
-    //[RTA_FLOW] = {"xresolve", ?ifla_encode_ulong},
-};
+static void decode_rtm_addr_attrs(struct netif *nb, const char *name, struct nlmsghdr *nlh)
+{
+    const struct nlattr_encoder_info *info =
+            nlattr_find_by_name(ifa_encoders, name);
+    if (info->decoder) {
+        info->decoder(info, nb, nlh);
+    } else {
+        errx(EXIT_FAILURE, "Can't find decoder for '%s'", name);
+    }
+}
 
 static int encode_rtm_route_attrs(const struct nlattr *attr, void *data)
 {
@@ -359,107 +458,191 @@ static int encode_rtm_route_attrs(const struct nlattr *attr, void *data)
     int rc = MNL_CB_OK;
 
     // Handle known attributes
-    const struct nlattr_encoder_info *info = &rta_encoders[type];
-    if (mnl_attr_type_valid(attr, RTA_MAX) >= 0 && info->name) {
+    const struct nlattr_encoder_info *info =
+            nlattr_find_by_type(rta_encoders, type);
+    if (mnl_attr_type_valid(attr, RTA_MAX) >= 0 && info->encoder) {
         encode_state_incr(state);
         rc = info->encoder(state, info->name, attr);
     }
 
     return rc;
 }
-
-static const char *ifa_family_to_string(unsigned char family)
+static void decode_rtm_route_attrs(struct netif *nb, const char *name, struct nlmsghdr *nlh)
 {
-    switch (family) {
-    case AF_INET: return "af_inet";
-    case AF_INET6: return "af_inet6";
-    default: return "af_other";
+    const struct nlattr_encoder_info *info =
+            nlattr_find_by_name(rta_encoders, name);
+    if (info->decoder) {
+        info->decoder(info, nb, nlh);
+    } else {
+        errx(EXIT_FAILURE, "Can't find decoder for '%s'", name);
     }
+}
+
+struct nl_typestring {
+    unsigned int type;
+    const char *str;
+};
+static const char *nl_typestring_to_string(const struct nl_typestring *strings, unsigned int type)
+{
+    for (const struct nl_typestring *pair = strings; pair->str != NULL; pair++) {
+        if (pair->type == type)
+            return pair->str;
+    }
+    return "unknown";
+}
+static unsigned int nl_typestring_to_int(const struct nl_typestring *strings, const char *str)
+{
+    for (const struct nl_typestring *pair = strings; pair->str != NULL; pair++) {
+        if (strcmp(str, pair->str) == 0)
+            return pair->type;
+    }
+    return 0;
+}
+
+static struct nl_typestring nlmsg_type_strings[] = {
+    { RTM_NEWLINK, "newlink" },
+    { RTM_DELLINK, "dellink" },
+    { RTM_NEWADDR, "newaddr" },
+    { RTM_DELADDR, "deladdr" },
+    { RTM_NEWROUTE, "newroute" },
+    { RTM_DELROUTE, "delroute" },
+    { RTM_NEWNEIGH, "newneigh" },
+    { RTM_DELNEIGH, "delneigh" },
+    { RTM_NEWRULE, "newrule" },
+    { RTM_DELRULE, "delrule" },
+    { RTM_NEWQDISC, "newqdisc" },
+    { RTM_DELQDISC, "delqdisc" },
+    { RTM_NEWTCLASS, "newtclass" },
+    { RTM_DELTCLASS, "deltclass" },
+    { RTM_NEWTFILTER, "newtfilter" },
+    { RTM_DELTFILTER, "deltfilter" },
+    { 0, NULL}
+};
+static struct nl_typestring ifi_type_strings[] = {
+    { ARPHRD_ETHER, "ethernet" },
+    { 0, NULL}
+};
+static struct nl_typestring rtm_type_strings[] = {
+    { RTN_UNSPEC, "unspec" },
+    { RTN_UNICAST, "unicast" },
+    { RTN_LOCAL, "local" },
+    { RTN_BROADCAST, "broadcast" },
+    { RTN_ANYCAST, "anycast" },
+    { RTN_MULTICAST, "multicast" },
+    { RTN_BLACKHOLE, "blackhole" },
+    { RTN_UNREACHABLE, "unreachable" },
+    { RTN_PROHIBIT, "prohibit" },
+    { RTN_THROW, "throw" },
+    { RTN_NAT, "nat" },
+    { RTN_XRESOLVE, "xresolve" },
+    { 0, NULL}
+};
+static struct nl_typestring rtm_protocol_strings[] = {
+    { RTPROT_UNSPEC, "unknown" },
+    { RTPROT_REDIRECT, "redirect" },
+    { RTPROT_KERNEL, "kernel" },
+    { RTPROT_BOOT, "boot" },
+    { RTPROT_STATIC, "static" },
+    { 0, NULL}
+};
+
+static struct nl_typestring rtm_scope_strings[] = {
+    { RT_SCOPE_UNIVERSE, "universe" },
+    { RT_SCOPE_SITE, "site" },
+    { RT_SCOPE_LINK, "link" },
+    { RT_SCOPE_HOST, "host" },
+    { RT_SCOPE_NOWHERE, "nowhere" },
+    { 0, NULL}
+};
+
+static struct nl_typestring rtm_table_strings[] = {
+    { RT_TABLE_UNSPEC, "unspec" },
+    { RT_TABLE_DEFAULT, "default" },
+    { RT_TABLE_MAIN, "main" },
+    { RT_TABLE_LOCAL, "local" },
+    { 0, NULL}
+};
+static struct nl_typestring ifa_family_strings[] = {
+    { AF_UNSPEC, "af_unspec"},
+    { AF_INET, "af_inet"},
+    { AF_INET6, "af_inet6"},
+    { 0, NULL}
+};
+
+static const char *nlmsg_type_to_string(unsigned short nlmsg_type)
+{
+    return nl_typestring_to_string(nlmsg_type_strings, nlmsg_type);
+}
+static unsigned short nlmsg_type_to_int(const char *str)
+{
+    return nl_typestring_to_int(nlmsg_type_strings, str);
 }
 
 static const char *ifi_type_to_string(unsigned short ifi_type)
 {
-    switch (ifi_type) {
-    case ARPHRD_ETHER: return "ethernet";
-    default: return "other";
-    }
+    return nl_typestring_to_string(ifi_type_strings, ifi_type);
 }
-
-static const char *nlmsg_type_to_string(unsigned short nlmsg_type)
+static unsigned short ifi_type_to_int(const char *str)
 {
-    switch (nlmsg_type) {
-    case RTM_NEWLINK: return "newlink";
-    case RTM_DELLINK: return "dellink";
-    case RTM_NEWADDR: return "newaddr";
-    case RTM_DELADDR: return "deladdr";
-    case RTM_NEWROUTE: return "newroute";
-    case RTM_DELROUTE: return "delroute";
-    case RTM_NEWNEIGH: return "newneigh";
-    case RTM_DELNEIGH: return "delneigh";
-    case RTM_NEWRULE: return "newrule";
-    case RTM_DELRULE: return "delrule";
-    case RTM_NEWQDISC: return "newqdisc";
-    case RTM_DELQDISC: return "delqdisc";
-    case RTM_NEWTCLASS: return "newtclass";
-    case RTM_DELTCLASS: return "deltclass";
-    case RTM_NEWTFILTER: return "newtfilter";
-    case RTM_DELTFILTER: return "deltfilter";
-    default: return "unknown";
-    }
+    return nl_typestring_to_int(ifi_type_strings, str);
 }
 
 static const char *rtm_type_to_string(unsigned char rtm_type)
 {
-    switch (rtm_type) {
-    case RTN_UNSPEC: return "unspec";
-    case RTN_UNICAST: return "unicast";
-    case RTN_LOCAL: return "local";
-    case RTN_BROADCAST: return "broadcast";
-    case RTN_ANYCAST: return "anycast";
-    case RTN_MULTICAST: return "multicast";
-    case RTN_BLACKHOLE: return "blackhole";
-    case RTN_UNREACHABLE: return "unreachable";
-    case RTN_PROHIBIT: return "prohibit";
-    case RTN_THROW: return "throw";
-    case RTN_NAT: return "nat";
-    case RTN_XRESOLVE: return "xresolve";
-    default: return "unknown";
-    }
+    return nl_typestring_to_string(rtm_type_strings, rtm_type);
+}
+static unsigned char rtm_type_to_int(const char *str)
+{
+    return nl_typestring_to_int(rtm_type_strings, str);
 }
 
 static const char *rtm_protocol_to_string(unsigned char rtm_protocol)
 {
-    switch (rtm_protocol) {
-    case RTPROT_UNSPEC: return "unknown";
-    case RTPROT_REDIRECT: return "redirect";
-    case RTPROT_KERNEL: return "kernel";
-    case RTPROT_BOOT: return "boot";
-    case RTPROT_STATIC: return "static";
-    default: return "unknown";
-    }
+    return nl_typestring_to_string(rtm_protocol_strings, rtm_protocol);
+}
+static unsigned char rtm_protocol_to_int(const char *str)
+{
+    return nl_typestring_to_int(rtm_protocol_strings, str);
 }
 
 static const char *rtm_scope_to_string(unsigned char rtm_scope)
 {
-    switch (rtm_scope) {
-    case RT_SCOPE_UNIVERSE: return "universe";
-    case RT_SCOPE_SITE: return "site";
-    case RT_SCOPE_LINK: return "link";
-    case RT_SCOPE_HOST: return "host";
-    case RT_SCOPE_NOWHERE: return "nowhere";
-    default: return "unknown";
-    }
+    return nl_typestring_to_string(rtm_scope_strings, rtm_scope);
+}
+static unsigned char rtm_scope_to_int(const char *str)
+{
+    return nl_typestring_to_int(rtm_scope_strings, str);
 }
 
 static const char *rtm_table_to_string(unsigned char rtm_table)
 {
-    switch (rtm_table) {
-    case RT_TABLE_UNSPEC: return "unspec";
-    case RT_TABLE_DEFAULT: return "default";
-    case RT_TABLE_MAIN: return "main";
-    case RT_TABLE_LOCAL: return "local";
-    default: return "unknown";
+    return nl_typestring_to_string(rtm_table_strings, rtm_table);
+}
+static unsigned char rtm_table_to_int(const char *str)
+{
+    return nl_typestring_to_int(rtm_table_strings, str);
+}
+
+static const char *ifa_family_to_string(unsigned char fam)
+{
+    return nl_typestring_to_string(ifa_family_strings, fam);
+}
+static unsigned char ifa_family_to_int(const char *str)
+{
+    return nl_typestring_to_int(ifa_family_strings, str);
+}
+static void dump_binary(const char *what, const unsigned char *buffer, size_t len)
+{
+    fprintf(stderr, "\r\n%s = <<", what);
+    int chars = 2;
+    for (size_t i = 0; i < len; i++) {
+        chars += fprintf(stderr, "%d%s", buffer[i], i != len - 1 ? ", " : "");
+        if (chars >= 70 && i != len - 1) {
+            fprintf(stderr, "\r\n  ");
+            chars = 2;
+        }
     }
+    fprintf(stderr, ">>\r\n");
 }
 
 static int netif_encode_rtnetlink(const struct nlmsghdr *nlh, void *data)
@@ -595,6 +778,7 @@ int handle_rtnetlink_notification(struct netif *nb, int bytecount)
     debug("mnl_nlmsg_fprintf{\n");
     mnl_nlmsg_fprintf(stderr, nb->nlbuf, bytecount, sizeof(struct ifinfomsg));
     debug("}mnl_nlmsg_fprintf\n");
+    dump_binary("notif", (const unsigned char *) nb->nlbuf, bytecount);
 #endif
 
     int rc = mnl_cb_run(nb->nlbuf, bytecount, 0, 0, netif_encode_rtnetlink, &state);
@@ -612,4 +796,221 @@ int handle_rtnetlink_notification(struct netif *nb, int bytecount)
     }
 
     return rc;
+}
+
+void process_ifm_attrs(struct netif *nb, struct nlmsghdr *nlh)
+{
+    struct ifinfomsg *ifm = mnl_nlmsg_put_extra_header(nlh, sizeof(*ifm));
+    memset(ifm, 0, sizeof(*ifm));
+    ifm->ifi_family = AF_UNSPEC; // Currently unsettable
+
+    int arity;
+    if (ei_decode_map_header(nb->req, &nb->req_index, &arity) < 0)
+        errx(EXIT_FAILURE, "expecting a map for ifm attributes");
+
+    for (int i = 0; i < arity; i++) {
+        char attr_type_str[20];
+        if (erlcmd_decode_atom(nb->req, &nb->req_index, attr_type_str, sizeof(attr_type_str)) < 0)
+            errx(EXIT_FAILURE, "Expecting atom for ifm attribute type");
+
+        if (strcmp(attr_type_str, "index") == 0) {
+            long temp;
+            ei_decode_long(nb->req, &nb->req_index, &temp);
+            ifm->ifi_index = temp;
+        } else if (strcmp(attr_type_str, "type") == 0) {
+            char temp[32];
+            erlcmd_decode_atom(nb->req, &nb->req_index, temp, sizeof(temp));
+            ifm->ifi_type = ifi_type_to_int(temp);
+        } else if (strcmp(attr_type_str, "is_up") == 0) {
+            int temp;
+            ei_decode_boolean(nb->req, &nb->req_index, &temp);
+            ifm->ifi_change |= IFF_UP;
+            if (temp)
+                ifm->ifi_flags |= IFF_UP;
+        } else if (strcmp(attr_type_str, "is_broadcast") == 0) {
+            int temp;
+            ei_decode_boolean(nb->req, &nb->req_index, &temp);
+            ifm->ifi_change |= IFF_BROADCAST;
+            if (temp)
+                ifm->ifi_flags |= IFF_BROADCAST;
+        } else if (strcmp(attr_type_str, "is_running") == 0) {
+            int temp;
+            ei_decode_boolean(nb->req, &nb->req_index, &temp);
+            ifm->ifi_change |= IFF_RUNNING;
+            if (temp)
+                ifm->ifi_flags |= IFF_RUNNING;
+        } else if (strcmp(attr_type_str, "is_lower_up") == 0) {
+            int temp;
+            ei_decode_boolean(nb->req, &nb->req_index, &temp);
+            ifm->ifi_change |= WORKAROUND_IFF_LOWER_UP;
+            if (temp)
+                ifm->ifi_flags |= WORKAROUND_IFF_LOWER_UP;
+        } else if (strcmp(attr_type_str, "is_multicast") == 0) {
+            int temp;
+            ei_decode_boolean(nb->req, &nb->req_index, &temp);
+            ifm->ifi_change |= IFF_MULTICAST;
+            if (temp)
+                ifm->ifi_flags |= IFF_MULTICAST;
+        } else {
+            decode_rtm_link_attrs(nb, attr_type_str, nlh);
+        }
+    }
+}
+
+void process_ifa_attrs(struct netif *nb, struct nlmsghdr *nlh)
+{
+    struct ifaddrmsg *ifa = mnl_nlmsg_put_extra_header(nlh, sizeof(*ifa));
+    memset(ifa, 0, sizeof(*ifa));
+
+    int arity;
+    if (ei_decode_map_header(nb->req, &nb->req_index, &arity) < 0)
+        errx(EXIT_FAILURE, "expecting a map for ifa attrs");
+
+    for (int i = 0; i < arity; i++) {
+        int tuple_arity;
+        if (ei_decode_tuple_header(nb->req, &nb->req_index, &tuple_arity) < 0 ||
+                tuple_arity != 2)
+            errx(EXIT_FAILURE, "expecting a 2-tuple for the ifa attribute");
+
+        char attr_type_str[20];
+        if (erlcmd_decode_atom(nb->req, &nb->req_index, attr_type_str, sizeof(attr_type_str)) < 0)
+            errx(EXIT_FAILURE, "Expecting atom for ifa attribute type");
+
+        if (strcmp(attr_type_str, "index") == 0) {
+            long temp;
+            ei_decode_long(nb->req, &nb->req_index, &temp);
+            ifa->ifa_index = temp;
+        } else if (strcmp(attr_type_str, "family") == 0) {
+            char temp[32];
+            erlcmd_decode_atom(nb->req, &nb->req_index, temp, sizeof(temp));
+            ifa->ifa_family = ifa_family_to_int(temp);
+        } else if (strcmp(attr_type_str, "scope") == 0) {
+            long temp;
+            ei_decode_long(nb->req, &nb->req_index, &temp);
+            ifa->ifa_scope = temp;
+        } else if (strcmp(attr_type_str, "prefixlen") == 0) {
+            long temp;
+            ei_decode_long(nb->req, &nb->req_index, &temp);
+            ifa->ifa_prefixlen = temp;
+        } else {
+            decode_rtm_addr_attrs(nb, attr_type_str, nlh);
+        }
+    }
+}
+
+void process_rtm_attrs(struct netif *nb, struct nlmsghdr *nlh)
+{
+    struct rtmsg *rtm = mnl_nlmsg_put_extra_header(nlh, sizeof(*rtm));
+    memset(rtm, 0, sizeof(*rtm));
+    rtm->rtm_flags = 0; // not possible to set
+
+    int arity;
+    if (ei_decode_map_header(nb->req, &nb->req_index, &arity) < 0)
+        errx(EXIT_FAILURE, "expecting a map for rtm");
+
+    for (int i = 0; i < arity; i++) {
+        char attr_type_str[20];
+        if (erlcmd_decode_atom(nb->req, &nb->req_index, attr_type_str, sizeof(attr_type_str)) < 0)
+            errx(EXIT_FAILURE, "Expecting atom for ifa attribute type");
+
+        if (strcmp(attr_type_str, "family") == 0) {
+            char temp[32];
+            erlcmd_decode_atom(nb->req, &nb->req_index, temp, sizeof(temp));
+            rtm->rtm_family = ifa_family_to_int(temp);
+        } else if (strcmp(attr_type_str, "dst_len") == 0) {
+            long temp;
+            ei_decode_long(nb->req, &nb->req_index, &temp);
+            rtm->rtm_dst_len = temp;
+        } else if (strcmp(attr_type_str, "src_len") == 0) {
+            long temp;
+            ei_decode_long(nb->req, &nb->req_index, &temp);
+            rtm->rtm_src_len = temp;
+        } else if (strcmp(attr_type_str, "tos") == 0) {
+            long temp;
+            ei_decode_long(nb->req, &nb->req_index, &temp);
+            rtm->rtm_tos = temp;
+        } else if (strcmp(attr_type_str, "table") == 0) {
+            char temp[32];
+            erlcmd_decode_atom(nb->req, &nb->req_index, temp, sizeof(temp));
+            rtm->rtm_table = rtm_table_to_int(temp);
+        } else if (strcmp(attr_type_str, "protocol") == 0) {
+            char temp[32];
+            erlcmd_decode_atom(nb->req, &nb->req_index, temp, sizeof(temp));
+            rtm->rtm_protocol = rtm_protocol_to_int(temp);
+        } else if (strcmp(attr_type_str, "scope") == 0) {
+            char temp[32];
+            erlcmd_decode_atom(nb->req, &nb->req_index, temp, sizeof(temp));
+            rtm->rtm_scope = rtm_scope_to_int(temp);
+        } else if (strcmp(attr_type_str, "type") == 0) {
+            char temp[32];
+            erlcmd_decode_atom(nb->req, &nb->req_index, temp, sizeof(temp));
+            rtm->rtm_type = rtm_type_to_int(temp);
+        } else {
+            decode_rtm_route_attrs(nb, attr_type_str, nlh);
+        }
+    }
+}
+
+
+int send_rtnetlink_message(struct netif *nb)
+{
+    // TEMPORARY until re-written in Elixir
+
+    char buf[2 * MNL_SOCKET_BUFFER_SIZE];
+    struct mnl_nlmsg_batch *batch = mnl_nlmsg_batch_start(buf, MNL_SOCKET_BUFFER_SIZE);
+
+    // Expecting a list of tuples
+    // [{:newlink, [attributes]}, {:newroute, [attributes]}, ...]
+
+    int arity;
+    if (ei_decode_list_header(nb->req, &nb->req_index, &arity) < 0)
+        errx(EXIT_FAILURE, "expecting a list");
+
+    for (int i = 0; i < arity; i++) {
+        int tuple_arity;
+        if (ei_decode_tuple_header(nb->req, &nb->req_index, &tuple_arity) < 0 ||
+                tuple_arity != 2)
+            errx(EXIT_FAILURE, "expecting a 2-tuple for the rtnetlink messages");
+
+        char msg_type_str[20];
+        if (erlcmd_decode_atom(nb->req, &nb->req_index, msg_type_str, sizeof(msg_type_str)) < 0)
+            errx(EXIT_FAILURE, "Expecting atom for rtnetlink message type");
+
+        char *buf = mnl_nlmsg_batch_current(batch);
+        struct nlmsghdr *nlh = mnl_nlmsg_put_header(buf);
+        nlh->nlmsg_type = nlmsg_type_to_int(msg_type_str);
+        nlh->nlmsg_flags = NLM_F_REQUEST; //  | NLM_F_ACK; Need an ACK???
+        nlh->nlmsg_seq = nb->seq++;
+
+        switch (nlh->nlmsg_type) {
+        case RTM_NEWLINK:
+        case RTM_DELLINK:
+            process_ifm_attrs(nb, nlh);
+            break;
+
+        case RTM_NEWADDR:
+        case RTM_DELADDR:
+            process_ifa_attrs(nb, nlh);
+            break;
+
+        case RTM_NEWROUTE:
+        case RTM_DELROUTE:
+            process_rtm_attrs(nb, nlh);
+            break;
+
+        default:
+            errx(EXIT_FAILURE, "Need to add %d!", nlh->nlmsg_type);
+            break;
+
+        }
+
+        if (!mnl_nlmsg_batch_next(batch))
+            errx(EXIT_FAILURE, "netlink message was too long");
+    }
+
+    if (mnl_socket_sendto(nb->nl, mnl_nlmsg_batch_head(batch), mnl_nlmsg_batch_size(batch)) < 0)
+        err(EXIT_FAILURE, "mnl_socket_sendto");
+
+    mnl_nlmsg_batch_stop(batch);
+    return 0;
 }

@@ -71,7 +71,6 @@ static void start_response(struct netif *nb)
 
 static void send_response(struct netif *nb)
 {
-    debug("sending response: %d bytes", nb->resp_index);
     erlcmd_send(nb->resp, nb->resp_index);
     nb->resp_index = 0;
 }
@@ -193,128 +192,18 @@ static void nl_route_process(struct netif *nb)
     }
 }
 
-static void netif_set_ifflags(struct netif *nb,
-                                  const char *ifname,
-                                  uint32_t flags,
-                                  uint32_t mask)
+static void netif_handle_send(struct netif *nb)
 {
-    struct ifreq ifr;
+    send_rtnetlink_message(nb);
 
     start_response(nb);
-
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
-    if (ioctl(nb->inet_fd, SIOCGIFFLAGS, &ifr) < 0) {
-        debug("SIOCGIFFLAGS error: %s", strerror(errno));
-        erlcmd_encode_errno_error(nb->resp, &nb->resp_index, errno);
-        send_response(nb);
-        return;
-    }
-
-    if ((ifr.ifr_flags ^ flags) & mask) {
-        ifr.ifr_flags = (ifr.ifr_flags & ~mask) | (mask & flags);
-        if (ioctl(nb->inet_fd, SIOCSIFFLAGS, &ifr)) {
-            debug("SIOCGIFFLAGS error: %s", strerror(errno));
-            erlcmd_encode_errno_error(nb->resp, &nb->resp_index, errno);
-            send_response(nb);
-            return;
-        }
-    }
-    erlcmd_encode_ok(nb->resp, &nb->resp_index);
-    send_response(nb);
-}
-
-
-static void netif_handle_get(struct netif *nb,
-                                 const char *ifname)
-{
-    start_response(nb);
-    int original_resp_index = nb->resp_index;
-
-    size_t num_entries = ip_setting_count();
-
-    ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
     ei_encode_atom(nb->resp, &nb->resp_index, "ok");
-    ei_encode_map_header(nb->resp, &nb->resp_index, num_entries);
-
-    nb->last_error = 0;
-    for (size_t i = 0; i < num_entries; i++) {
-        const struct ip_setting_handler *handler = &handlers[i];
-        if (handler->get(handler, nb, ifname) < 0)
-            break;
-    }
-
-    if (nb->last_error) {
-        nb->resp_index = original_resp_index;
-        erlcmd_encode_errno_error(nb->resp, &nb->resp_index, nb->last_error);
-    }
-    send_response(nb);
-}
-
-static const struct ip_setting_handler *find_handler(const char *name)
-{
-    for (const struct ip_setting_handler *handler = handlers;
-         handler->name != NULL;
-         handler++) {
-        if (strcmp(handler->name, name) == 0)
-            return handler;
-    }
-    return NULL;
-}
-
-static void netif_handle_set(struct netif *nb,
-                             const char *ifname)
-{
-    nb->last_error = 0;
-
-    start_response(nb);
-
-    int arity;
-    if (ei_decode_map_header(nb->req, &nb->req_index, &arity) < 0)
-        errx(EXIT_FAILURE, "setting attributes requires a map");
-
-    size_t num_entries = ip_setting_count();
-    void *handler_context[num_entries];
-    memset(handler_context, 0, sizeof(handler_context));
-
-    // Parse all options
-    for (int i = 0; i < arity && nb->last_error == 0; i++) {
-        char name[32];
-        if (erlcmd_decode_atom(nb->req, &nb->req_index, name, sizeof(name)) < 0)
-            errx(EXIT_FAILURE, "error in map encoding");
-
-        // Look up the option. If we don't know it, silently ignore it so that
-        // the caller can pass in maps that contain options for other code.
-        const struct ip_setting_handler *handler = find_handler(name);
-        if (handler)
-            handler->prep(handler, nb, &handler_context[handler - handlers]);
-        else
-            ei_skip_term(nb->req, &nb->req_index);
-    }
-
-    // If no errors, then set everything
-    if (!nb->last_error) {
-        // Order is important: see note on handlers
-        for (size_t i = 0; i < num_entries; i++) {
-            if (handler_context[i]) {
-                handlers[i].set(&handlers[i], nb, ifname, handler_context[i]);
-                free(handler_context[i]);
-            }
-        }
-    }
-
-    // Encode and send the response
-    if (nb->last_error)
-        erlcmd_encode_errno_error(nb->resp, &nb->resp_index, nb->last_error);
-    else
-        erlcmd_encode_ok(nb->resp, &nb->resp_index);
-
     send_response(nb);
 }
 
 static void netif_request_handler(const char *req, void *cookie)
 {
     struct netif *nb = (struct netif *) cookie;
-    char ifname[IFNAMSIZ];
 
     // Commands are of the form {Command, Arguments}:
     // { atom(), term() }
@@ -333,30 +222,9 @@ static void netif_request_handler(const char *req, void *cookie)
         errx(EXIT_FAILURE, "expecting command atom");
 
     if (strcmp(cmd, "refresh") == 0) {
-        debug("refresh");
         netif_handle_refresh(nb);
-    } else if (strcmp(cmd, "ifup") == 0) {
-        if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
-            errx(EXIT_FAILURE, "ifup requires ifname");
-        debug("ifup: %s", ifname);
-        netif_set_ifflags(nb, ifname, IFF_UP, IFF_UP);
-    } else if (strcmp(cmd, "ifdown") == 0) {
-        if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
-            errx(EXIT_FAILURE, "ifdown requires ifname");
-        debug("ifdown: %s", ifname);
-        netif_set_ifflags(nb, ifname, 0, IFF_UP);
-    } else if (strcmp(cmd, "setup") == 0) {
-        if (ei_decode_tuple_header(nb->req, &nb->req_index, &arity) < 0 ||
-                arity != 2 ||
-                erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
-            errx(EXIT_FAILURE, "setup requires {ifname, parameters}");
-        debug("set: %s", ifname);
-        netif_handle_set(nb, ifname);
-    } else if (strcmp(cmd, "settings") == 0) {
-        if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
-            errx(EXIT_FAILURE, "settings requires ifname");
-        debug("get: %s", ifname);
-        netif_handle_get(nb, ifname);
+    } else if (strcmp(cmd, "send") == 0) {
+        netif_handle_send(nb);
     } else
         errx(EXIT_FAILURE, "unknown command: %s", cmd);
 }

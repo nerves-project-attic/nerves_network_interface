@@ -46,6 +46,16 @@ defmodule RtnetlinkTest do
     assert address == %{address: "192.168.1.15", broadcast: "192.168.1.255", family: :af_inet, local: "192.168.1.15", prefixlen: 24, scope: 0}
   end
 
+  test "interface was renamed" do
+    ifaces = []
+    {:ok, t, ifaces} = R.decode({:newlink, %{ifname: "wlan0", index: 3, is_broadcast: true}}, ifaces)
+    iface = get_in(t.updates, [:state, :network_interface, "wlan0"])
+    assert iface == %{ifname: "wlan0", is_broadcast: true, index: 3}
+    {:ok, t, _ifaces} = R.decode({:newlink, %{ifname: "wlan1234", index: 3, is_broadcast: true}}, ifaces)
+    iface = get_in(t.updates, [:state, :network_interface, "wlan1234"])
+    assert iface == %{ifname: "wlan1234", is_broadcast: true, index: 3}
+  end
+
   test "deladdr returns a system registry key to delete" do
     ifaces = [%{ifname: "wlan0", index: 3, is_broadcast: true}]
     {:ok, _, ifaces} = R.decode({:newaddr, %{address: "fe80::863a:4bff:fe11:95f6", family: :af_inet6, index: 3, prefixlen: 64, scope: 253}}, ifaces)

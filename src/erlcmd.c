@@ -84,7 +84,7 @@ static size_t erlcmd_try_dispatch(struct erlcmd *handler)
     if (msglen + sizeof(uint16_t) > handler->index)
         return 0;
 
-#if 0
+#if 1
 fprintf(stderr, "Got %d length request\n", (int)msglen);
 for (size_t i = 0; i < msglen; i++)
     fprintf(stderr, "%d, ", handler->buffer[i]);

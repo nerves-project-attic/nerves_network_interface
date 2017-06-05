@@ -240,6 +240,12 @@ int main(int argc, char *argv[])
     struct erlcmd handler;
     erlcmd_init(&handler, netif_request_handler, &nb);
 
+#if 0
+    const char test[] = {0, 60, -125, 104, 2, 100, 0, 4, 115, 101, 110, 100, 108, 0, 0, 0, 1, 104, 2, 100, 0, 7, 110, 101, 119, 97, 100, 100, 114, 116, 0, 0, 0, 1, 100, 0, 7, 97, 100, 100, 114, 101, 115, 115, 109, 0, 0, 0, 12, 49, 57, 50, 46, 49, 54, 56, 46, 49, 46, 49};
+    netif_request_handler(test, &nb);
+    exit(0);
+#endif
+
     for (;;) {
         struct pollfd fdset[2];
 

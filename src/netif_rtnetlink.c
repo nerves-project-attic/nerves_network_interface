@@ -867,11 +867,6 @@ void process_ifa_attrs(struct netif *nb, struct nlmsghdr *nlh)
         errx(EXIT_FAILURE, "expecting a map for ifa attrs");
 
     for (int i = 0; i < arity; i++) {
-        int tuple_arity;
-        if (ei_decode_tuple_header(nb->req, &nb->req_index, &tuple_arity) < 0 ||
-                tuple_arity != 2)
-            errx(EXIT_FAILURE, "expecting a 2-tuple for the ifa attribute");
-
         char attr_type_str[20];
         if (erlcmd_decode_atom(nb->req, &nb->req_index, attr_type_str, sizeof(attr_type_str)) < 0)
             errx(EXIT_FAILURE, "Expecting atom for ifa attribute type");
@@ -960,7 +955,7 @@ int send_rtnetlink_message(struct netif *nb)
     struct mnl_nlmsg_batch *batch = mnl_nlmsg_batch_start(buf, MNL_SOCKET_BUFFER_SIZE);
 
     // Expecting a list of tuples
-    // [{:newlink, [attributes]}, {:newroute, [attributes]}, ...]
+    // [{:newlink, %{attributes}}, {:newroute, %{attributes}}, ...]
 
     int arity;
     if (ei_decode_list_header(nb->req, &nb->req_index, &arity) < 0)

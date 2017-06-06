@@ -731,9 +731,11 @@ static int netif_encode_rtnetlink(const struct nlmsghdr *nlh, void *data)
         encode_kv_atom(nb, "protocol", rtm_protocol_to_string(rtm->rtm_protocol));
         encode_kv_atom(nb, "scope", rtm_scope_to_string(rtm->rtm_scope));
         encode_kv_atom(nb, "type", rtm_type_to_string(rtm->rtm_type));
+        encode_kv_ulong(nb, "src_len", rtm->rtm_src_len);
+        encode_kv_ulong(nb, "dst_len", rtm->rtm_dst_len);
 
         state->af_family = rtm->rtm_family;
-        state->count[state->level] += 6;
+        state->count[state->level] += 8;
         cb = encode_rtm_route_attrs;
         offset = sizeof(struct rtmsg);
         break;

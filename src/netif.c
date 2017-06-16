@@ -17,7 +17,6 @@
 
 #include "netif.h"
 #include "netif_rtnetlink.h"
-#include "netif_settings.h"
 #include "util.h"
 
 #include <err.h>

@@ -5,6 +5,11 @@
 iex> Nerves.NetworkInterface.send [{:newlink, %{ifname: "eth0", mac_address: "e0:db:55:e7:8b:51"}}]
 ```
 
+Check it out with ip:
+
+```bash
+$ ip link
+```
 
 ## Bring an interface up
 
@@ -51,4 +56,23 @@ iex> Nerves.NetworkInterface.send [{:deladdr, %{index: 2, family: :af_inet, pref
 
 I don't know how to delete just one. It seems like deladdr ignores the "local" and "address" fields.
 
+## Set the default gateway
 
+```bash
+# List routes
+ip route
+
+# Manually add route via ip command
+sudo ip route add default via 192.168.1.1 dev wlan0 proto static
+
+# Manually delete route via ip command
+sudo ip route del default via 192.168.1.1 dev wlan0
+
+# See the raw netlink message that the ip command sends
+sudo strace -s256 ip route add default via 192.168.1.1 dev wlan0 proto static
+```
+
+```
+iex> NI.send [newroute: %{family: :af_inet, gateway: "192.168.1.1", oif: 3, protocol: :static, scope: :universe, table: :main, type: :unicast}]
+
+```

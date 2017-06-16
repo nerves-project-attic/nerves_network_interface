@@ -981,16 +981,19 @@ int send_rtnetlink_message(struct netif *nb)
 
         switch (nlh->nlmsg_type) {
         case RTM_NEWLINK:
+            nlh->nlmsg_flags |= NLM_F_REPLACE | NLM_F_CREATE;
         case RTM_DELLINK:
             process_ifm_attrs(nb, nlh);
             break;
 
         case RTM_NEWADDR:
+            nlh->nlmsg_flags |= NLM_F_REPLACE | NLM_F_CREATE;
         case RTM_DELADDR:
             process_ifa_attrs(nb, nlh);
             break;
 
         case RTM_NEWROUTE:
+            nlh->nlmsg_flags |= NLM_F_REPLACE | NLM_F_CREATE;
         case RTM_DELROUTE:
             process_rtm_attrs(nb, nlh);
             break;

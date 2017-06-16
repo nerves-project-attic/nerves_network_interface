@@ -11,9 +11,6 @@ struct netif {
     struct mnl_socket *nl;
     int seq;
 
-    // NETLINK_KOBJECT_UEVENT socket information
-    struct mnl_socket *nl_uevent;
-
     // AF_INET socket for ioctls
     int inet_fd;
 

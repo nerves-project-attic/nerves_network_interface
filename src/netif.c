@@ -44,10 +44,6 @@ static void netif_init(struct netif *nb)
     if (mnl_socket_bind(nb->nl, RTMGRP_LINK | RTMGRP_IPV4_ROUTE | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR, MNL_SOCKET_AUTOPID) < 0)
         err(EXIT_FAILURE, "mnl_socket_bind");
 
-    nb->nl_uevent = mnl_socket_open(NETLINK_KOBJECT_UEVENT);
-    if (!nb->nl_uevent)
-        err(EXIT_FAILURE, "mnl_socket_open (NETLINK_KOBJECT_UEVENT)");
-
     nb->inet_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (nb->inet_fd < 0)
         err(EXIT_FAILURE, "socket");

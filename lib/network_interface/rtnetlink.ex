@@ -28,7 +28,6 @@ defmodule Nerves.NetworkInterface.Rtnetlink do
         {_, ifaces} -> {msg, ifaces}
       end
     new(t, msg, iface, ifaces)
-
   end
 
   def decode(%T{} = t, {:dellink, msg}, ifaces) do

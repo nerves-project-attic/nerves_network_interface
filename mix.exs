@@ -39,7 +39,8 @@ defmodule Nerves.NetworkInterface.Mixfile do
   end
 
   defp deps do
-    [{:elixir_make, "~> 0.4", runtime: false},
+    [{:system_registry, "~> 0.2.1"},
+     {:elixir_make, "~> 0.4", runtime: false},
      {:ex_doc, "~> 0.11", only: :dev}]
   end
 end

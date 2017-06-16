@@ -1,4 +1,4 @@
-defmodule NetBasicTest do
+defmodule NervesNetworkInterfaceTest do
   use ExUnit.Case
 
   test "the truth" do

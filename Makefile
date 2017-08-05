@@ -5,11 +5,26 @@
 # CFLAGS        compiler flags for compiling all C files
 # ERL_PATH      the path to the erlang installation (e.g., /usr/lib/erlang)
 # ERL_CFLAGS    additional compiler flags for files using Erlang header files
-# ERL_EI_LIBDIR path to libei.a
+# ERL_EI_LIBDIR path to libei.a (Required for crosscompile)
 # LDFLAGS       linker flags for linking all binaries
 # ERL_LDFLAGS   additional linker flags for projects referencing Erlang libraries
 # SUDO_ASKPASS  path to ssh-askpass when modifying ownership of netif
 # SUDO          path to SUDO. If you don't want the privileged parts to run, set to "true"
+
+# Check that we're on a supported build platform
+ifeq ($(CROSSCOMPILE),)
+    # Not crosscompiling, so check that we're on Linux.
+    ifneq ($(shell uname -s),Linux)
+        $(warning nerves_network_interface only works on Linux, but crosscompilation)
+        $(warning is supported by defining $$CROSSCOMPILE and $$ERL_EI_LIBDIR.)
+        $(warning See Makefile for details. If using Nerves,)
+        $(warning this should be done automatically.)
+        $(warning .)
+        $(warning Skipping C compilation unless targets explicitly passed to make.)
+	DEFAULT_TARGETS = priv
+    endif
+endif
+DEFAULT_TARGETS ?= priv priv/netif
 
 # Note: If crosscompiling, either ERL_PATH or both ERL_CFLAGS and ERL_LDFLAGS need
 #       to be specified or you'll get the host erl's versions and the linking step
@@ -23,7 +38,7 @@ ERL_LDFLAGS ?= -L$(ERL_EI_LIBDIR) -lei
 LDFLAGS += -lmnl
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter -pedantic
 
-CC ?= $(CROSSCOMPILE)gcc
+CC ?= $(CROSSCOMPILE)-gcc
 
 # Unfortunately, depending on the system we're on, we need
 # to specify -std=c99 or -std=gnu99. The later is more correct,
@@ -45,13 +60,15 @@ endif
 
 .PHONY: all clean
 
-all: priv/netif
+all: $(DEFAULT_TARGETS)
 
 %.o: %.c
 	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) -o $@ $<
 
+priv:
+	mkdir -p priv
+
 priv/netif: src/erlcmd.o src/netif.o
-	@mkdir -p priv
 	$(CC) $^ $(ERL_LDFLAGS) $(LDFLAGS) -o $@
 	# setuid root net_basic so that it can configure network interfaces
 	SUDO_ASKPASS=$(SUDO_ASKPASS) $(SUDO) -- sh -c 'chown root:root $@; chmod +s $@'

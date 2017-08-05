@@ -1,6 +1,6 @@
 # Variables to override
 #
-# CC            C compiler
+# CC            C compiler. MUST be set if crosscompiling
 # CROSSCOMPILE	crosscompiler prefix, if any
 # CFLAGS        compiler flags for compiling all C files
 # ERL_PATH      the path to the erlang installation (e.g., /usr/lib/erlang)
@@ -38,7 +38,6 @@ ERL_LDFLAGS ?= -L$(ERL_EI_LIBDIR) -lei
 LDFLAGS += -lmnl
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter -pedantic
 
-CC ?= $(CROSSCOMPILE)-gcc
 
 # Unfortunately, depending on the system we're on, we need
 # to specify -std=c99 or -std=gnu99. The later is more correct,

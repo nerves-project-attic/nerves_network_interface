@@ -1,9 +1,15 @@
 # Changelog
 
+## v0.4.1
+
+  * Enhancements
+    * Support compilation on OSX. It won't run, but it's good enough for
+      creating docs and pushing to hex.
+
 ## v0.4.0
 
-* Enhancements
-  * Replaced GenEvent with Registry
+  * Enhancements
+    * Replaced GenEvent with Registry
 
 ## v0.3.2
 

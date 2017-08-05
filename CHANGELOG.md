@@ -5,6 +5,8 @@
   * Enhancements
     * Support compilation on OSX. It won't run, but it's good enough for
       creating docs and pushing to hex.
+    * Make MAC address handling more user friendly by using strings and
+      supporting sets.
 
 ## v0.4.0
 

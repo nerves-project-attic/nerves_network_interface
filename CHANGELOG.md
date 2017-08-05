@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.2
+
+  * Bug fixes
+    * Don't rely on hex preserving execute permissions on the shell script.
+
 ## v0.4.1
 
   * Enhancements

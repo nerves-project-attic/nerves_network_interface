@@ -13,45 +13,106 @@
 # limitations under the License.
 
 defmodule Nerves.NetworkInterface.Worker do
+  @moduledoc """
+  Working for NetworkInterface.
+  See `Nerves.NetworkInterface` for more details.
+  """
+
   use GenServer
   require Logger
 
-  @moduledoc false
+  @enforce_keys [:port]
+  defstruct [:port]
 
-  defstruct port: nil,
-            requests: []
+  @typedoc "State of the GenServer"
+  @type t :: %__MODULE__{port: port}
 
+  @typedoc "Setup options."
+  @type options :: map
+
+  @typedoc "Interface name"
+  @type ifname :: String.t
+
+  @spec start_link() :: GenServer.on_start()
   def start_link() do
     GenServer.start_link(__MODULE__, [], name: __MODULE__)
   end
 
+  @spec stop() :: :ok
   def stop() do
     GenServer.cast(__MODULE__, :stop)
   end
 
+  @spec interfaces() :: [ifname]
   def interfaces() do
     GenServer.call(__MODULE__, :interfaces)
   end
 
+  @typep mac_address :: bitstring
+
+  @type stats :: %{
+    collisions: number,
+    multicast: number,
+    rx_bytes: number,
+    rx_dropped: number,
+    rx_errors: number,
+    rx_packets: number,
+    tx_bytes: number,
+    tx_dropped: number,
+    tx_errors: number,
+    tx_packets: number
+  }
+
+  @typedoc "Status response"
+  @type status :: %{
+    ifname: ifname,
+    type: :ethernet,
+    index: number,
+    is_broadcast: boolean,
+    is_lower_up: boolean,
+    is_multicast: boolean,
+    is_up: boolean,
+    is_running: boolean,
+    mac_address: mac_address,
+    mac_broadcast: mac_address,
+    mtu: number,
+    operstate: :up | :down,
+    stats: stats
+  }
+
+  @spec status(ifname) :: {:ok, status}
   def status(ifname) do
     GenServer.call(__MODULE__, {:status, ifname})
   end
 
+  @spec ifup(ifname) :: :ok
   def ifup(ifname) do
     GenServer.call(__MODULE__, {:ifup, ifname})
   end
 
+  @spec ifdown(ifname) :: :ok
   def ifdown(ifname) do
     GenServer.call(__MODULE__, {:ifdown, ifname})
   end
 
+  @type ip_address :: binary
+
+  @typedoc "Interface settings"
+  @type settings :: %{ipv4_address: ip_address,
+                      ipv4_broadcast: ip_address,
+                      ipv4_gateway: ip_address,
+                      ipv4_subnet_mask: ip_address}
+
+  @spec settings(ifname) :: {:ok, settings}
   def settings(ifname) do
     GenServer.call(__MODULE__, {:settings, ifname})
   end
 
+  @spec setup(ifname, Keyword.t | options) :: :ok
   def setup(ifname, options) when is_list(options) do
     setup(ifname, :maps.from_list(options))
   end
+
   def setup(ifname, options) when is_map(options) do
     GenServer.call(__MODULE__, {:setup, ifname, options})
   end
@@ -103,11 +164,21 @@ defmodule Nerves.NetworkInterface.Worker do
     end)
     {:noreply, state}
   end
+
   def handle_info({_, {:exit_status, _}}, state) do
     {:stop, :unexpected_exit, state}
   end
 
+  @typedoc false
+  @type port_resp :: any | no_return
+
+  @typedoc "Command to be sent to the port."
+  @type command :: :ifup | :ifdown | :setup | :settings | :interfaces
+
+  @typedoc "Arguments for a command"
+  @type command_arguments :: {ifname, options} | ifname
   # Private helper functions
+  @spec call_port(t, command, command_arguments) :: port_resp
   defp call_port(state, command, arguments) do
     msg = {command, arguments}
     send state.port, {self(), {:command, :erlang.term_to_binary(msg)}}

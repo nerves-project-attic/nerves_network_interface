@@ -155,6 +155,10 @@ To enable or disable an interface, you can do so with `Nerves.NetworkInterface.i
     iex> Nerves.NetworkInterface.ifdown "eth0"
     :ok
 
+## Testing
+To run tests you will need a linux machine with `ip`, `iproute2` and `sudo` access. See (#Permissions)[Permissions] for more info.
+by default `mix test` does not include `external`. To run all the unit tests you should do `mix test --include external`
+
 ## Licensing
 
 This package is licensed under the Apache 2.0 license.

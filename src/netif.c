@@ -14,6 +14,15 @@
  * limitations under the License.
  */
 
+/*
+ * Copyright (C) 2017 Schneider Electric
+ *
+ * IPv6 support
+ * @author Tomasz Kazimierz Motyl
+ * @date 2017-10-13
+ */
+
+
 #include <err.h>
 #include <poll.h>
 #include <stdio.h>
@@ -30,6 +39,8 @@
 #include <linux/if.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/ipv6.h>
+#include <netinet/in.h>
 
 // In Ubuntu 16.04, it seems that the new compat logic handling is preventing
 // IFF_LOWER_UP from being defined properly. It looks like a bug, so define it
@@ -44,9 +55,11 @@
 
 //#define DEBUG
 #ifdef DEBUG
-#define debug(...) do { fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\r\n"); } while(0)
+#define debug(format, ...)  fprintf(stderr, format, ...), fprintf(stderr, "\r\n")
+#define debugf(string) fprintf(stderr, string), fprintf(stderr, "\r\n")
 #else
-#define debug(...)
+#define debug(format, ...) 
+#define debugf(string)
 #endif
 
 struct netif {
@@ -59,6 +72,9 @@ struct netif {
 
     // AF_INET socket for ioctls
     int inet_fd;
+
+    // AF_INET6 socket for ioctls
+    int inet6_fd;
 
     // Netlink buffering
     char nlbuf[8192]; // See MNL_SOCKET_BUFFER_SIZE
@@ -102,6 +118,10 @@ static void netif_init(struct netif *nb)
     nb->inet_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (nb->inet_fd < 0)
         err(EXIT_FAILURE, "socket");
+
+    nb->inet6_fd = socket(AF_INET6, SOCK_DGRAM, 0);
+    if (nb->inet6_fd < 0)
+        err(EXIT_FAILURE, "socket6");
 
     nb->seq = 1;
 }
@@ -202,6 +222,11 @@ static void encode_kv_string(struct netif *nb, const char *key, const char *str)
     ei_encode_atom(nb->resp, &nb->resp_index, key);
     encode_string(nb->resp, &nb->resp_index, str);
 }
+static void encode_kv_atom(struct netif *nb, const char *key, const char *str)
+{
+    ei_encode_atom(nb->resp, &nb->resp_index, key);
+    ei_encode_atom(nb->resp, &nb->resp_index, str);
+}
 
 static void encode_kv_macaddr(struct netif *nb, const char *key, const unsigned char *macaddr)
 {
@@ -260,7 +285,7 @@ static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
     struct ifinfomsg *ifm = mnl_nlmsg_get_payload(nlh);
 
     if (mnl_attr_parse(nlh, sizeof(*ifm), collect_if_attrs, tb) != MNL_CB_OK) {
-        debug("Error from mnl_attr_parse");
+        debugf("Error from mnl_attr_parse");
         return MNL_CB_ERROR;
     }
 
@@ -453,7 +478,7 @@ static void netif_handle_status_callback(struct netif *nb, int bytecount)
     ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
     ei_encode_atom(nb->resp, &nb->resp_index, "ok");
     if (mnl_cb_run(nb->nlbuf, bytecount, nb->response_seq, nb->response_portid, netif_build_ifinfo, nb) < 0) {
-        debug("error from or mnl_cb_run?");
+        debugf("error from or mnl_cb_run?");
         nb->resp_index = original_resp_index;
         erlcmd_encode_errno_error(nb->resp, &nb->resp_index, errno);
     }
@@ -565,6 +590,25 @@ static int check_default_gateway(const struct nlmsghdr *nlh, void *data)
     return MNL_CB_OK;
 }
 
+static int check_default_gateway6(const struct nlmsghdr *nlh, void *data)
+{
+    struct nlattr *tb[RTA_MAX + 1];
+    memset(tb, 0, sizeof(tb));
+    struct rtmsg *rm = mnl_nlmsg_get_payload(nlh);
+    mnl_attr_parse(nlh, sizeof(*rm), collect_route_attrs, tb);
+
+    struct fdg_data *fdg = (struct fdg_data *) data;
+    if (rm->rtm_scope == 0 &&
+            tb[RTA_OIF] &&
+            (int) mnl_attr_get_u32(tb[RTA_OIF]) == fdg->oif &&
+            tb[RTA_GATEWAY]) {
+        // Found it.
+        inet_ntop(AF_INET6, mnl_attr_get_payload(tb[RTA_GATEWAY]), fdg->result, INET6_ADDRSTRLEN);
+    }
+
+    return MNL_CB_OK;
+}
+
 static void find_default_gateway(struct netif *nb,
                                 int oif,
                                 char *result)
@@ -602,6 +646,41 @@ static void find_default_gateway(struct netif *nb,
         err(EXIT_FAILURE, "mnl_socket_recvfrom");
 }
 
+static void find_default_gateway6(struct netif *nb,
+                                int oif,
+                                char *result)
+{
+    struct nlmsghdr *nlh = mnl_nlmsg_put_header(nb->nlbuf);
+    struct rtmsg *rtm    = mnl_nlmsg_put_extra_header(nlh, sizeof(struct rtmsg));
+    unsigned int portid = 0;
+    unsigned int seq    = 0;
+    ssize_t ret         = 0;
+    struct fdg_data fdg = { .oif = oif, .result = result };
+
+    nlh->nlmsg_type  = RTM_GETROUTE;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    nlh->nlmsg_seq   = seq = nb->seq++;
+
+    rtm->rtm_family = AF_INET6;
+
+    if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0)
+        err(EXIT_FAILURE, "mnl_socket_send");
+
+    mnl_socket_get_portid(nb->nl);
+
+    fdg.result[0] = '\0';
+
+    ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
+    while (ret > 0) {
+        ret = mnl_cb_run(nb->nlbuf, ret, seq, portid, check_default_gateway6, &fdg);
+        if (ret <= MNL_CB_STOP)
+            break;
+        ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
+    }
+    if (ret == -1)
+        err(EXIT_FAILURE, "mnl_socket_recvfrom");
+}
+
 struct ip_setting_handler {
     const char *name;
     int (*prep)(const struct ip_setting_handler *handler, struct netif *nb, void **context);
@@ -619,9 +698,32 @@ static int get_mac_address_ioctl(const struct ip_setting_handler *handler, struc
 static int prep_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context);
 static int set_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
 static int get_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+static int set_ipaddr6_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
+static int get_ipaddr6(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+static int prep_ipaddr6_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context);
 static int prep_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, void **context);
 static int set_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
 static int get_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+static int prep_default_gateway6(const struct ip_setting_handler *handler, struct netif *nb, void **context);
+static int set_default_gateway6(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
+static int get_default_gateway6(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+static int prep_ipv6_autoconf(const struct ip_setting_handler *handler, struct netif *nb, void **context);
+static int set_ipv6_autoconf(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
+static int get_ipv6_autoconf(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+static int prep_ipv6_accept_ra(const struct ip_setting_handler *handler, struct netif *nb, void **context);
+static int set_ipv6_accept_ra(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
+static int get_ipv6_accept_ra(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+static int ifname_to_index(struct netif *nb, const char *ifname);
+static int add_default_gateway6(struct netif *nb, const char *ifname, const char *gateway_ip);
+static int prep_ipv6_disable(const struct ip_setting_handler *handler, struct netif *nb, void **context);
+static int set_ipv6_disable(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
+static int get_ipv6_disable(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+static int prep_ipv6_accept_ra_pinfo(const struct ip_setting_handler *handler, struct netif *nb, void **context);
+static int set_ipv6_accept_ra_pinfo(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
+static int get_ipv6_accept_ra_pinfo(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
+static int prep_ipv6_forwarding(const struct ip_setting_handler *handler, struct netif *nb, void **context);
+static int set_ipv6_forwarding(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
+static int get_ipv6_forwarding(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
 
 // These handlers are listed in the order that they should be invoked when
 // configuring the interface. For example, "ipv4_gateway" is listed at the end
@@ -629,10 +731,17 @@ static int get_default_gateway(const struct ip_setting_handler *handler, struct 
 // setting the gateway may fail since Linux thinks that it is on the wrong subnet.
 static const struct ip_setting_handler handlers[] = {
     { "ipv4_address", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFADDR, SIOCGIFADDR },
+    { "ipv6_address", prep_ipaddr6_ioctl, set_ipaddr6_ioctl, get_ipaddr6, SIOCSIFADDR, 0 },
     { "ipv4_subnet_mask", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFNETMASK, SIOCGIFNETMASK },
     { "ipv4_broadcast", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFBRDADDR, SIOCGIFBRDADDR },
     { "ipv4_gateway", prep_default_gateway, set_default_gateway, get_default_gateway, 0, 0 },
+    { "ipv6_gateway", prep_default_gateway6, set_default_gateway6, get_default_gateway6, 0, 0 },
     { "mac_address", prep_mac_address_ioctl, set_mac_address_ioctl, get_mac_address_ioctl, SIOCSIFHWADDR, SIOCGIFHWADDR },
+    { "ipv6_autoconf", prep_ipv6_autoconf, set_ipv6_autoconf, get_ipv6_autoconf, 0, 0 },
+    { "ipv6_disable", prep_ipv6_disable, set_ipv6_disable, get_ipv6_disable, 0, 0 },
+    { "ipv6_accept_ra", prep_ipv6_accept_ra, set_ipv6_accept_ra, get_ipv6_accept_ra, 0, 0 },
+    { "ipv6_accept_ra_pinfo", prep_ipv6_accept_ra_pinfo, set_ipv6_accept_ra_pinfo, get_ipv6_accept_ra_pinfo, 0, 0 },
+    { "ipv6_forwarding", prep_ipv6_forwarding, set_ipv6_forwarding, get_ipv6_forwarding, 0, 0 },
 };
 #define HANDLER_COUNT (sizeof(handlers) / sizeof(handlers[0]))
 
@@ -648,6 +757,412 @@ static int prep_mac_address_ioctl(const struct ip_setting_handler *handler, stru
         *context = NULL;
     else
         *context = strdup(macaddr_str);
+
+    return 0;
+}
+
+struct ipv6_procfs_ctx {
+    char token[10]; /* ProcFs atom string true/false/override */
+};
+#define member_size(type, member) sizeof( ((type *) 0)->member)
+
+static int ipv6_read_integer_from_file(const struct ip_setting_handler *handler, struct netif *nb, const char *fname, int *val)
+{
+    FILE *f = NULL;
+
+    (void) handler;
+
+    if((f = fopen(fname, "r")) == NULL) {
+        debug("Unable to open file '%s' for '%s'", fname, handler->name);
+        nb->last_error = errno;
+        return -1;
+    }
+
+    if(fscanf(f, "%d", val) < 0) {
+        nb->last_error = EIO;
+        fclose(f);
+        return -1;
+    }
+
+    fclose(f);
+    return 0;
+}
+
+static int ipv6_write_integer_to_file(const struct ip_setting_handler *handler, struct netif *nb, const char *fname, const int val)
+{
+    FILE *f = NULL;
+
+    (void) handler;
+
+    if ((f = fopen(fname, "w")) == NULL) {
+        debug("Unable to open file '%s' for '%s'", fname, handler->name);
+        nb->last_error = errno;
+        return -1;
+    }
+
+    
+    if (fprintf(f, "%d", val) < 0) {
+        nb->last_error = EIO;
+        fclose(f);
+        return -1;
+    }
+
+    fclose(f);
+
+    return 0;
+}
+
+
+static int prep_ipv6_autoconf(const struct ip_setting_handler *handler, struct netif *nb, void **context)
+{
+    struct ipv6_procfs_ctx *ac_ctx = *context = malloc(sizeof(struct ipv6_procfs_ctx));
+
+    if(*context == NULL) {
+        errx(EXIT_FAILURE, "Unable to allocate memory for '%s'", handler->name);
+    }
+
+    if ( erlcmd_decode_atom(nb->req, &nb->req_index, &ac_ctx->token[0], member_size(struct ipv6_procfs_ctx, token) ) < 0)
+        errx(EXIT_FAILURE, "Autoconf value true/false required for '%s'", handler->name);
+
+    return 0;
+}
+
+static int prep_ipv6_forwarding(const struct ip_setting_handler *handler, struct netif *nb, void **context)
+{
+    struct ipv6_procfs_ctx *ac_ctx = *context = malloc(sizeof(struct ipv6_procfs_ctx));
+
+    if(*context == NULL) {
+        errx(EXIT_FAILURE, "Unable to allocate memory for '%s'", handler->name);
+    }
+
+    if ( erlcmd_decode_atom(nb->req, &nb->req_index, &ac_ctx->token[0], member_size(struct ipv6_procfs_ctx, token) ) < 0)
+        errx(EXIT_FAILURE, "Autoconf value true/false required for '%s'", handler->name);
+
+    return 0;
+}
+
+static int prep_ipv6_disable(const struct ip_setting_handler *handler, struct netif *nb, void **context)
+{
+    struct ipv6_procfs_ctx *ac_ctx = *context = malloc(sizeof(struct ipv6_procfs_ctx));
+
+    if(*context == NULL) {
+        errx(EXIT_FAILURE, "Unable to allocate memory for '%s'", handler->name);
+    }
+
+    if ( erlcmd_decode_atom(nb->req, &nb->req_index, &ac_ctx->token[0], member_size(struct ipv6_procfs_ctx, token) ) < 0)
+        errx(EXIT_FAILURE, "Autoconf value true/false required for '%s'", handler->name);
+
+    return 0;
+}
+
+static int prep_ipv6_accept_ra_pinfo(const struct ip_setting_handler *handler, struct netif *nb, void **context)
+{
+    struct ipv6_procfs_ctx *ac_ctx = *context = malloc(sizeof(struct ipv6_procfs_ctx));
+
+    if(*context == NULL) {
+        errx(EXIT_FAILURE, "Unable to allocate memory for '%s'", handler->name);
+    }
+
+    if ( erlcmd_decode_atom(nb->req, &nb->req_index, &ac_ctx->token[0], member_size(struct ipv6_procfs_ctx, token) ) < 0)
+        errx(EXIT_FAILURE, "Autoconf value true/false required for '%s'", handler->name);
+
+    return 0;
+}
+
+static int prep_ipv6_accept_ra(const struct ip_setting_handler *handler, struct netif *nb, void **context)
+{
+    struct ipv6_procfs_ctx *ac_ctx = *context = malloc(sizeof(struct ipv6_procfs_ctx));
+
+    if(*context == NULL) {
+        errx(EXIT_FAILURE, "Unable to allocate memory for '%s'", handler->name);
+    }
+
+    if ( erlcmd_decode_atom(nb->req, &nb->req_index, &ac_ctx->token[0], member_size(struct ipv6_procfs_ctx, token) ) < 0)
+        errx(EXIT_FAILURE, "Autoconf value true/false required for '%s'", handler->name);
+
+    return 0;
+}
+
+static int ipv6_bool_atom_to_integer(const struct ip_setting_handler *handler, struct netif *nb, const char *str, int *val) {
+    if (strcmp(str, "true") == 0) {
+        *val = 1;
+    }
+    else if (strcmp(str, "false") == 0) {
+        *val = 0;
+    }
+    else {
+        debug("Unsupported value of '%s' for '%s'", str, handler->name);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int ipv6_tri_state_atom_to_integer(const struct ip_setting_handler *handler, struct netif *nb, const char *str, int *val) {
+    if (strcmp(str, "true") == 0) {
+        *val = 1;
+    }
+    else if (strcmp(str, "false") == 0) {
+        *val = 0;
+    }
+    else if (strcmp(str, "override") == 0) {
+        *val = 2;
+    }
+    else {
+        debug("Unsupported value of '%s' for '%s'", str, handler->name);
+        return -1;
+    }
+
+    return 0;
+}
+
+static const char *ipv6_tri_state_integer_to_atom(const int val) {
+    static const char *atoms[] = {
+        "false",     /* 0 */
+        "true",      /* 1 */
+        "override",  /* 2 */
+        ""           /* 3 */
+    };
+
+    switch(val) {
+        case 0:
+        case 1:
+        case 2:
+            return atoms[val];
+        default:
+            break;
+    };
+
+    return atoms[3];
+}
+
+static int ipv6_create_procfs_file_name(const struct ip_setting_handler *handler, struct netif *nb, char *dest, const size_t max_len, const char *ifname, const char *sys_fname)
+{
+    (void) handler;
+
+    if ((unsigned int) snprintf(dest, max_len, "/proc/sys/net/ipv6/conf/%s/%s", ifname, sys_fname) >= max_len) {
+        debug("The file name truncated! Setting not performed for '%s'", handler->name);
+        nb->last_error = ENOMEM;
+        return -1;
+    }
+
+    return 0;
+}
+
+/* The proc file's path is in the format: /proc/sys/net/ipv6/conf /<ifname>/accept_ra - hence we need 
+ * IFNAMSIZ + 34 bytes for the remainder '/proc/sys/net/ipv6/conf//accept_ra' +1 for '\0' string termination */
+#define NETIF_IPV6_PROC_FILENAME_MAXLEN (IFNAMSIZ+60+1)
+
+static int set_ipv6_autoconf(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
+{
+    struct ipv6_procfs_ctx *ac_ctx = (struct ipv6_procfs_ctx *) context;
+    char fname[NETIF_IPV6_PROC_FILENAME_MAXLEN] = {'\0', };
+    int autoconf = 0;
+
+    if(ipv6_create_procfs_file_name(handler, nb, fname, sizeof(fname), ifname, "autoconf") < 0) {
+        return -1;
+    }
+
+    if (ipv6_bool_atom_to_integer(handler, nb, ac_ctx->token, &autoconf) < 0) {
+        nb->last_error = EOPNOTSUPP;
+        return -1;
+    }
+
+    if(ipv6_write_integer_to_file(handler, nb, fname, autoconf) < 0){
+        return -1;
+    }
+
+    return 0;
+}
+
+static int set_ipv6_forwarding(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
+{
+    struct ipv6_procfs_ctx *ac_ctx = (struct ipv6_procfs_ctx *) context;
+    char fname[NETIF_IPV6_PROC_FILENAME_MAXLEN] = {'\0', };
+    int forwarding = 0;
+
+    if(ipv6_create_procfs_file_name(handler, nb, fname, sizeof(fname), ifname, "forwarding") < 0) {
+        return -1;
+    }
+
+    if (ipv6_bool_atom_to_integer(handler, nb, ac_ctx->token, &forwarding) < 0) {
+        nb->last_error = EOPNOTSUPP;
+        return -1;
+    }
+
+    if(ipv6_write_integer_to_file(handler, nb, fname, forwarding) < 0){
+        return -1;
+    }
+
+    return 0;
+}
+
+static int set_ipv6_disable(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
+{
+    struct ipv6_procfs_ctx *ac_ctx = (struct ipv6_procfs_ctx *) context;
+    char fname[NETIF_IPV6_PROC_FILENAME_MAXLEN] = {'\0', };
+    int disable = 0;
+
+    if(ipv6_create_procfs_file_name(handler, nb, fname, sizeof(fname), ifname, "disable_ipv6") < 0) {
+        return -1;
+    }
+
+    if (ipv6_bool_atom_to_integer(handler, nb, ac_ctx->token, &disable) < 0) {
+        nb->last_error = EOPNOTSUPP;
+        return -1;
+    }
+
+    if(ipv6_write_integer_to_file(handler, nb, fname, disable) < 0){
+        return -1;
+    }
+
+    return 0;
+}
+
+static int set_ipv6_accept_ra_pinfo(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
+{
+    struct ipv6_procfs_ctx *ac_ctx = (struct ipv6_procfs_ctx *) context;
+    char fname[NETIF_IPV6_PROC_FILENAME_MAXLEN] = {'\0', };
+    int accept_ra_pinfo = 0;
+
+    if(ipv6_create_procfs_file_name(handler, nb, fname, sizeof(fname), ifname, "accept_ra_pinfo") < 0) {
+        return -1;
+    }
+
+    if (ipv6_bool_atom_to_integer(handler, nb, ac_ctx->token, &accept_ra_pinfo) < 0) {
+        nb->last_error = EOPNOTSUPP;
+        return -1;
+    }
+
+    if(ipv6_write_integer_to_file(handler, nb, fname, accept_ra_pinfo) < 0){
+        return -1;
+    }
+
+    return 0;
+}
+
+static int get_ipv6_autoconf(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
+{
+    /* The proc file's path is in the format: /proc/sys/net/ipv6/conf /<ifname>/accept_ra - hence we need 
+     * IFNAMSIZ + 34 bytes for the remainder '/proc/sys/net/ipv6/conf//accept_ra' +1 for '\0' string termination */
+    char fname[NETIF_IPV6_PROC_FILENAME_MAXLEN] = {'\0', };
+    int autoconf = 0;
+
+    if(ipv6_create_procfs_file_name(handler, nb, &fname[0], sizeof(fname), ifname, "autoconf") < 0) {
+        debug("[%s %d] generated fname = '%s'\r\n", __FILE__, __LINE__, fname);
+        return -1;
+    }
+
+    if(ipv6_read_integer_from_file(handler, nb, fname, &autoconf) < 0) {
+        return -1;
+    }
+
+    encode_kv_bool(nb, handler->name, autoconf);
+
+    return 0;
+}
+
+static int get_ipv6_forwarding(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
+{
+    /* The proc file's path is in the format: /proc/sys/net/ipv6/conf /<ifname>/accept_ra - hence we need 
+     * IFNAMSIZ + 34 bytes for the remainder '/proc/sys/net/ipv6/conf//accept_ra' +1 for '\0' string termination */
+    char fname[NETIF_IPV6_PROC_FILENAME_MAXLEN] = {'\0', };
+    int forwarding = 0;
+
+    if(ipv6_create_procfs_file_name(handler, nb, &fname[0], sizeof(fname), ifname, "forwarding") < 0) {
+        debug("[%s %d] generated fname = '%s'\r\n", __FILE__, __LINE__, fname);
+        return -1;
+    }
+
+    if(ipv6_read_integer_from_file(handler, nb, fname, &forwarding) < 0) {
+        return -1;
+    }
+
+    encode_kv_bool(nb, handler->name, forwarding);
+
+    return 0;
+}
+
+static int get_ipv6_disable(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
+{
+    /* The proc file's path is in the format: /proc/sys/net/ipv6/conf /<ifname>/accept_ra - hence we need 
+     * IFNAMSIZ + 34 bytes for the remainder '/proc/sys/net/ipv6/conf//accept_ra' +1 for '\0' string termination */
+    char fname[NETIF_IPV6_PROC_FILENAME_MAXLEN] = {'\0', };
+    int disable = 0;
+
+    if(ipv6_create_procfs_file_name(handler, nb, &fname[0], sizeof(fname), ifname, "disable_ipv6") < 0) {
+        debug("[%s %d] generated fname = '%s'\r\n", __FILE__, __LINE__, fname);
+        return -1;
+    }
+
+    if(ipv6_read_integer_from_file(handler, nb, fname, &disable) < 0) {
+        return -1;
+    }
+
+    encode_kv_bool(nb, handler->name, disable);
+
+    return 0;
+}
+
+static int get_ipv6_accept_ra_pinfo(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
+{
+    /* The proc file's path is in the format: /proc/sys/net/ipv6/conf /<ifname>/accept_ra - hence we need 
+     * IFNAMSIZ + 34 bytes for the remainder '/proc/sys/net/ipv6/conf//accept_ra' +1 for '\0' string termination */
+    char fname[NETIF_IPV6_PROC_FILENAME_MAXLEN] = {'\0', };
+    int accept_ra_pinfo = 0;
+
+    if(ipv6_create_procfs_file_name(handler, nb, &fname[0], sizeof(fname), ifname, "accept_ra_pinfo") < 0) {
+        debug("[%s %d] generated fname = '%s'\r\n", __FILE__, __LINE__, fname);
+        return -1;
+    }
+
+    if(ipv6_read_integer_from_file(handler, nb, fname, &accept_ra_pinfo) < 0) {
+        return -1;
+    }
+
+    encode_kv_bool(nb, handler->name, accept_ra_pinfo);
+
+    return 0;
+}
+
+static int set_ipv6_accept_ra(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
+{
+    struct ipv6_procfs_ctx *ac_ctx = (struct ipv6_procfs_ctx *) context;
+    char fname[NETIF_IPV6_PROC_FILENAME_MAXLEN] = {'\0', };
+    int accept_ra = 0;
+
+    if(ipv6_create_procfs_file_name(handler, nb, fname, sizeof(fname), ifname, "accept_ra") < 0) {
+        return -1;
+    }
+
+    if (ipv6_tri_state_atom_to_integer(handler, nb, ac_ctx->token, &accept_ra) < 0) {
+        nb->last_error = EOPNOTSUPP;
+        return -1;
+    }
+
+    if(ipv6_write_integer_to_file(handler, nb, fname, accept_ra) < 0){
+        return -1;
+    }
+
+    return 0;
+}
+
+static int get_ipv6_accept_ra(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
+{
+    /* The proc file's path is in the format: /proc/sys/net/ipv6/conf /<ifname>/accept_ra - hence we need 
+     * IFNAMSIZ + 34 bytes for the remainder '/proc/sys/net/ipv6/conf//accept_ra' +1 for '\0' string termination */
+    char fname[NETIF_IPV6_PROC_FILENAME_MAXLEN] = {'\0', };
+    int accept_ra = 0;
+
+    if(ipv6_create_procfs_file_name(handler, nb, &fname[0], sizeof(fname), ifname, "accept_ra") < 0) {
+        return -1;
+    }
+
+    if(ipv6_read_integer_from_file(handler, nb, fname, &accept_ra) < 0) {
+        return -1;
+    }
+
+    encode_kv_atom(nb, handler->name, ipv6_tri_state_integer_to_atom(accept_ra) );
 
     return 0;
 }
@@ -695,7 +1210,7 @@ static int get_mac_address_ioctl(const struct ip_setting_handler *handler, struc
     if (addr->sin_family == AF_UNIX) {
         encode_kv_macaddr(nb, handler->name, (unsigned char *) &ifr.ifr_hwaddr.sa_data);
     } else {
-        debug("got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
+        debug("Got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
         nb->last_error = EINVAL;
         return -1;
     }
@@ -714,6 +1229,67 @@ static int prep_ipaddr_ioctl(const struct ip_setting_handler *handler, struct ne
         *context = NULL;
     else
         *context = strdup(ipaddr);
+
+    return 0;
+}
+
+static int prep_ipaddr6_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context)
+{
+    struct in6_ifreq *ifr6  = malloc(sizeof(struct in6_ifreq));
+    char *prefix_ptr = (void *) NULL;
+    char ipaddr[INET6_ADDRSTRLEN] = {0, };
+
+    if(ifr6 == NULL) {
+        debug("Unable to allocate memory for '%s'", handler->name);
+        nb->last_error = ENOMEM;
+        return -1;
+    }
+
+    *context = ifr6;
+
+    memset(ifr6, 0, sizeof(*ifr6));
+
+    debug("[%s %d]: prep_ipaddr6_ioctl\r\n", __FILE__, __LINE__);
+
+    if (erlcmd_decode_string(nb->req, &nb->req_index, ipaddr, INET6_ADDRSTRLEN) < 0)
+        errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
+
+    /* Let's check whether prefix was provided as part of the address */
+    prefix_ptr = strchr(ipaddr, (int) '/');
+
+    if(prefix_ptr != NULL) {
+        char *end_ptr   = NULL;
+        long int retval = 0;
+
+        /* Let's terminate the preceeding IPv6 address so we would be able to parse it later on */
+        *prefix_ptr = '\0';
+
+        /* Parse the prefix */
+        retval = strtol(&prefix_ptr[1], &end_ptr, 0);
+
+        /* There were no digits to parse */
+        if(&prefix_ptr[1] == end_ptr) {
+            nb->last_error = EINVAL;
+            return -1;
+        }
+
+        /* Of course prefix cannot be a negative number and longer than the IPv6 address itself */
+        if((retval < 0) || (retval > 128)) {
+            nb->last_error = EINVAL;
+            return -1;
+        }
+
+        ifr6->ifr6_prefixlen = (int) retval;
+    }
+
+    if (inet_pton(AF_INET6, ipaddr, &ifr6->ifr6_addr) <= 0) {
+        debug("Bad IP address for '%s': %s", handler->name, ipaddr);
+        nb->last_error = EINVAL;
+        return -1;
+    }
+
+    /* We are restoring the original '/' caracter we temporarily replaced with '\0' */
+    *prefix_ptr = '/';
 
     return 0;
 }
@@ -765,10 +1341,126 @@ static int get_ipaddr_ioctl(const struct ip_setting_handler *handler, struct net
         }
         encode_kv_string(nb, handler->name, addrstr);
     } else {
-        debug("got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
+        debug("Got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
         nb->last_error = EINVAL;
         return -1;
     }
+    return 0;
+}
+
+static int get_if_index(struct netif *nb, const char *ifname, int * const if_index)
+{
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+    if (ioctl(nb->inet_fd, SIOGIFINDEX, &ifr) < 0) {
+        nb->last_error = errno;
+        return -1;
+    }
+
+    *if_index = ifr.ifr_ifindex;
+    return 0;
+}
+
+#if defined(DEBUG)
+static void byte_debug(char * caption, void *buf, int len) {
+    int i = 0;
+    fprintf(stderr, "======================== %s ========================\r\n", caption);
+    for(; i < len; i++) 
+        fprintf(stderr, "%02x ", (int) ((unsigned char *) buf)[i]);
+}
+#else
+#   define byte_debug(caption, buf, len)
+#endif /* DEBUG */
+
+static int set_ipaddr6_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
+{
+    struct in6_ifreq *ifr6 = (struct in6_ifreq *) context;
+
+    debug("[%s %d]: set_ipaddr6_ioctl\r\n", __FILE__, __LINE__);
+
+    byte_debug("ifr6_addr", &ifr6->ifr6_addr, sizeof(ifr6->ifr6_addr));
+
+    if(get_if_index(nb, ifname, &ifr6->ifr6_ifindex) != 0) {
+        debug("Unable to obtain netif index '%s': %d", handler->name, ifr6->ifr6_ifindex);
+        nb->last_error = EINVAL;
+        return -1;
+    }
+
+    debug("netif index '%s': %d", handler->name, ifr6->ifr6_ifindex);
+
+    if (ioctl(nb->inet6_fd, handler->ioctl_set, ifr6) < 0) {
+        debug("ioctl(0x%04x) failed for setting '%s': %s", handler->ioctl_set, handler->name, strerror(errno));
+        nb->last_error = errno;
+        return -1;
+    }
+
+    return 0;
+}
+
+/* Encodes the erlang list of IPv6 addresses' strings in the form of [ a | [b | [c] ] bound to a network interface if the ifname name */
+static int get_ipaddr6(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
+{
+    FILE *f = fopen("/proc/net/if_inet6", "r");
+    struct in6_addr ip6 = {.s6_addr = {0, }};
+    char parsed_ifname[IFNAMSIZ] = {'\0', };
+    unsigned int prefix = 0;
+    unsigned int scope  = 0;
+
+    if(f == NULL) {
+        debug("[%s %d]: Unable to open file for reading!!", __FILE__, __LINE__);
+        nb->last_error = errno;
+        return -1;
+    }
+    /* A sample entry for an interface fe80000000000000020c29fffe9c009e 02 40 20 80    eth0 */
+
+    ei_encode_atom(nb->resp, &nb->resp_index, handler->name);
+    while(19 == fscanf(f, "%2hhx%2hhx%2hhx%2hhx""%2hhx%2hhx%2hhx%2hhx""%2hhx%2hhx%2hhx%2hhx""%2hhx%2hhx%2hhx%2hhx""%*x %x %x %*x %s",
+                    &ip6.s6_addr[0],
+                    &ip6.s6_addr[1],
+                    &ip6.s6_addr[2],
+                    &ip6.s6_addr[3],
+                    &ip6.s6_addr[4],
+                    &ip6.s6_addr[5],
+                    &ip6.s6_addr[6],
+                    &ip6.s6_addr[7],
+                    &ip6.s6_addr[8],
+                    &ip6.s6_addr[9],
+                    &ip6.s6_addr[10],
+                    &ip6.s6_addr[11],
+                    &ip6.s6_addr[12],
+                    &ip6.s6_addr[13],
+                    &ip6.s6_addr[14],
+                    &ip6.s6_addr[15],
+                    &prefix, &scope, &parsed_ifname[0])) {
+        char address[INET6_ADDRSTRLEN] = {'\0', };
+        char prefix_str[4]             = {'\0', };
+
+        if(strcmp(parsed_ifname, ifname) != 0) {
+            debug("[%s %d]: Parsed ifname '%s' neq ifname = '%s' skipping...", __FILE__, __LINE__, parsed_ifname, ifname);
+            continue;
+        }
+
+        if(inet_ntop(AF_INET6, &ip6, address, sizeof(address)) == NULL) {
+            debug("[%s %d]: Invalid IP address skipping...", __FILE__, __LINE__);
+            continue;
+        }
+
+        sprintf(prefix_str, "/%d", prefix);
+
+        debug("[%s %d]: address = '%s'", __FILE__, __LINE__, address);
+        debug("[%s %d]: prefix  = '%s'", __FILE__, __LINE__, prefix_str);
+        strcat(address, prefix_str);
+        debug("[%s %d]: Result address = '%s'", __FILE__, __LINE__, address);
+        /* Let's concat the prefix length in the IPv6 address string */
+        ei_encode_list_header(nb->resp, &nb->resp_index, 1);
+        encode_string(nb->resp, &nb->resp_index, address);
+    } /* while (19 == fscanf(...) */
+    ei_encode_empty_list(nb->resp, &nb->resp_index);
+
+    fclose(f);
+
     return 0;
 }
 
@@ -797,6 +1489,35 @@ static int remove_all_gateways(struct netif *nb, const char *ifname)
     // of them.
     for (;;) {
         int rc = ioctl(nb->inet_fd, SIOCDELRT, &route);
+        if (rc < 0) {
+            if (errno == ESRCH) {
+                return 0;
+            } else {
+                nb->last_error = errno;
+                return -1;
+            }
+        }
+    }
+}
+
+static int remove_all_gateways6(struct netif *nb, const char *ifname)
+{
+    struct in6_rtmsg route = {0, };
+    struct in6_addr *gw  = (struct in6_addr *) &route.rtmsg_gateway;
+    struct in6_addr *dst = (struct in6_addr *) &route.rtmsg_dst;
+
+    *gw  = in6addr_any;
+    *dst = in6addr_any;
+
+    route.rtmsg_dst_len = 0;
+    route.rtmsg_ifindex = ifname_to_index(nb, ifname);
+    route.rtmsg_flags   = RTF_UP; /* if the RTF_GATEWAY flag is set the gateway ip must exactly mach the one in the fib table */
+    route.rtmsg_metric  = 0;
+
+    /* There may be more than one gateway. Remove all of them. */
+    for (;;) {
+        int rc = ioctl(nb->inet6_fd, SIOCDELRT, &route);
+        debug("Removing GW returnt rc = %d\r\n", rc);
         if (rc < 0) {
             if (errno == ESRCH) {
                 return 0;
@@ -851,6 +1572,78 @@ static int prep_default_gateway(const struct ip_setting_handler *handler, struct
         errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
 
     *context = strdup(gateway);
+    return 0;
+}
+
+static int prep_default_gateway6(const struct ip_setting_handler *handler, struct netif *nb, void **context)
+{
+    char gateway[INET6_ADDRSTRLEN] = {'\0', };
+    if (erlcmd_decode_string(nb->req, &nb->req_index, gateway, INET6_ADDRSTRLEN) < 0)
+        errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
+
+    *context = strdup(gateway);
+    return 0;
+}
+
+static int set_default_gateway6(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
+{
+    (void) handler;
+    const char *gateway = context;
+
+    // Before one can be set, any configured gateways need to be removed.
+    if (remove_all_gateways6(nb, ifname) < 0) {
+        debug("remove_all_gateways6 failed for '%s' : %s", handler->name, gateway);
+        return -1;
+    }
+
+    // If no gateway was specified, then we're done.
+    if (*gateway == '\0')
+        return 0;
+
+    return add_default_gateway6(nb, ifname, gateway);
+}
+
+static int get_default_gateway6(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
+{
+    int oif = ifname_to_index(nb, ifname);
+    char gateway_ip[INET6_ADDRSTRLEN] = {'\0', };
+
+    if (oif < 0)
+        return -1;
+
+    find_default_gateway6(nb, oif, gateway_ip);
+    debug("[%s %d]: gateway_ip = '%s'\r\n", __FILE__, __LINE__, gateway_ip);
+
+    // If the gateway isn't found, then the empty string is what we want.
+    encode_kv_string(nb, handler->name, gateway_ip);
+    return 0;
+}
+
+static int add_default_gateway6(struct netif *nb, const char *ifname, const char *gateway_ip)
+{
+    struct in6_rtmsg route = {0, };
+    struct in6_addr *dst = (struct in6_addr *) &route.rtmsg_dst;
+    struct in6_addr *gw  = (struct in6_addr *) &route.rtmsg_gateway;
+
+    *dst = in6addr_any;
+
+    if (inet_pton(AF_INET6, gateway_ip, (void *) gw) <= 0) {
+        debug("Bad IP address for the default gateway v6: %s", gateway_ip);
+        nb->last_error = EINVAL;
+        return -1;
+    }
+
+    route.rtmsg_dst_len = 0; /* router does not have to have a prefix */
+    route.rtmsg_flags   = RTF_UP | RTF_GATEWAY;
+    route.rtmsg_metric  = 0;
+    route.rtmsg_ifindex = ifname_to_index(nb, ifname);
+
+    int rc = ioctl(nb->inet6_fd, SIOCADDRT, &route);
+    if (rc < 0 && errno != EEXIST) {
+        debug("IOCTL failed for the default gateway v6: %s", gateway_ip);
+        nb->last_error = errno;
+        return -1;
+    }
     return 0;
 }
 
@@ -954,6 +1747,7 @@ static void netif_handle_set(struct netif *nb,
         // Look up the option. If we don't know it, silently ignore it so that
         // the caller can pass in maps that contain options for other code.
         const struct ip_setting_handler *handler = find_handler(name);
+        debug("[%s %d]: ip_setting_handler = %p\r\n", __FILE__, __LINE__, (void *) handler);
         if (handler)
             handler->prep(handler, nb, &handler_context[handler - handlers]);
         else
@@ -970,6 +1764,8 @@ static void netif_handle_set(struct netif *nb,
             }
         }
     }
+
+    debug("[%s %d]: last_error = %d\r\n", __FILE__, __LINE__, nb->last_error);
 
     // Encode and send the response
     if (nb->last_error)
@@ -1002,7 +1798,7 @@ static void netif_request_handler(const char *req, void *cookie)
         errx(EXIT_FAILURE, "expecting command atom");
 
     if (strcmp(cmd, "interfaces") == 0) {
-        debug("interfaces");
+        debugf("interfaces");
         netif_handle_interfaces(nb);
     } else if (strcmp(cmd, "status") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
@@ -1022,8 +1818,10 @@ static void netif_request_handler(const char *req, void *cookie)
     } else if (strcmp(cmd, "setup") == 0) {
         if (ei_decode_tuple_header(nb->req, &nb->req_index, &arity) < 0 ||
                 arity != 2 ||
-                erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
+                erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0) {
+            debugf("setup requires {ifname, parameters}");
             errx(EXIT_FAILURE, "setup requires {ifname, parameters}");
+        }
         debug("set: %s", ifname);
         netif_handle_set(nb, ifname);
     } else if (strcmp(cmd, "settings") == 0) {

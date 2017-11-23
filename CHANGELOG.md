@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.3
+
+  * Bug fixes
+    * Fixed issue with C99 compiler test not working right on some x86_64
+      builds. It is more robust now.
+    * Improved typespecs
+    * Added a unit test
+
 ## v0.4.2
 
   * Bug fixes

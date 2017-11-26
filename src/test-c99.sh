@@ -5,7 +5,7 @@ if [ -z $CC ]; then
 fi
 
 # See Makefile
-$CC -std=c99 -D_XOPEN_SOURCE=600 -o /dev/null -xc - 2>/dev/null <<EOF
+$CC $CFLAGS -std=c99 -D_XOPEN_SOURCE=600 -o /dev/null -xc - 2>/dev/null <<EOF
 // For whatever reason, this test is more robust when the include
 // order matches what's in netif.c
 #include <err.h>

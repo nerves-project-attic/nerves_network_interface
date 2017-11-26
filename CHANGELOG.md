@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.4
+
+  * Bug fixes
+    * Fixed include path issue with C99 compiler test code. This fixes IFNAMSIZ
+      compiler errors.
+
 ## v0.4.3
 
   * Bug fixes

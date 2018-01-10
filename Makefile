@@ -50,6 +50,9 @@ else
 CFLAGS += -std=gnu99
 endif
 
+#We need this for netinet/in.h IN6_* macros
+CFLAGS += -D_GNU_SOURCE
+
 # If not cross-compiling, then run sudo by default
 ifeq ($(origin CROSSCOMPILE), undefined)
 SUDO_ASKPASS ?= /usr/bin/ssh-askpass

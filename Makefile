@@ -45,9 +45,9 @@ CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter -pedantic
 # NOTE: Need to call sh here since file permissions are not preserved
 #       in hex packages.
 ifeq ($(shell CC=$(CC) sh src/test-c99.sh),yes)
-CFLAGS += -std=c11 -D_XOPEN_SOURCE=600
+CFLAGS += -std=c99 -D_XOPEN_SOURCE=600
 else
-CFLAGS += -std=gnu11
+CFLAGS += -std=gnu99
 endif
 
 #We need this for netinet/in.h IN6_* macros

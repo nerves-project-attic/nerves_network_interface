@@ -47,7 +47,7 @@ CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter -pedantic
 ifeq ($(shell CC=$(CC) sh src/test-c99.sh),yes)
 CFLAGS += -std=c11 -D_XOPEN_SOURCE=600
 else
-CFLAGS += -std=c11
+CFLAGS += -std=gnu11
 endif
 
 #We need this for netinet/in.h IN6_* macros

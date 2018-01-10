@@ -1531,25 +1531,25 @@ static int remove_ipaddr6_ioctl(const struct ip_setting_handler *handler, struct
 
 static char * get_ip6_address_scope(char * restrict scope_str, const struct in6_addr *addr) {
   if(IN6_IS_ADDR_LINKLOCAL(addr)) {
-      return strncpy(scope_str, "link-local", SCOPE_STR_MAX_LEN); # done
+      return strncpy(scope_str, "link-local", SCOPE_STR_MAX_LEN);
   } else if(IN6_IS_ADDR_SITELOCAL(addr)) {
       return strncpy(scope_str, "site-local", SCOPE_STR_MAX_LEN);
   } else if(IN6_IS_ADDR_UNSPECIFIED(addr)) {
-      return strncpy(scope_str, "unspecified", SCOPE_STR_MAX_LEN); #done
+      return strncpy(scope_str, "unspecified", SCOPE_STR_MAX_LEN);
   } else if(IN6_IS_ADDR_LOOPBACK(addr)) {
-      return strncpy(scope_str, "loopback", SCOPE_STR_MAX_LEN); # done
+      return strncpy(scope_str, "loopback", SCOPE_STR_MAX_LEN);
   } else if(IN6_IS_ADDR_V4MAPPED(addr)) {
-      return strncpy(scope_str, "v4-mapped", SCOPE_STR_MAX_LEN); # done
+      return strncpy(scope_str, "v4-mapped", SCOPE_STR_MAX_LEN);
   } else if(IN6_IS_ADDR_V4COMPAT(addr)) {
-      return strncpy(scope_str, "v4-compat", SCOPE_STR_MAX_LEN); #done
+      return strncpy(scope_str, "v4-compat", SCOPE_STR_MAX_LEN);
   } else if(IN6_IS_ADDR_MC_NODELOCAL(addr)) {
-      return strncpy(scope_str, "node-local", SCOPE_STR_MAX_LEN); # done
+      return strncpy(scope_str, "node-local", SCOPE_STR_MAX_LEN);
   } else if(IN6_IS_ADDR_MC_LINKLOCAL(addr)) {
-      return strncpy(scope_str, "link-local", SCOPE_STR_MAX_LEN); # done
+      return strncpy(scope_str, "link-local", SCOPE_STR_MAX_LEN);
   } else if(IN6_IS_ADDR_MC_SITELOCAL(addr)) {
       return strncpy(scope_str, "site-local", SCOPE_STR_MAX_LEN);
   } else if(IN6_IS_ADDR_MC_ORGLOCAL(addr)) {
-      return strncpy(scope_str, "org-local", SCOPE_STR_MAX_LEN); # done
+      return strncpy(scope_str, "org-local", SCOPE_STR_MAX_LEN);
   } else if(IN6_IS_ADDR_MC_GLOBAL(addr)) {
       return strncpy(scope_str, "global", SCOPE_STR_MAX_LEN);
   } else {

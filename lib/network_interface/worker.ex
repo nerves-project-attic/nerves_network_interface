@@ -71,6 +71,7 @@ defmodule Nerves.NetworkInterface.Worker do
     is_broadcast: boolean,
     is_lower_up: boolean,
     is_multicast: boolean,
+    "is_all-multicast": boolean,
     is_up: boolean,
     is_running: boolean,
     mac_address: mac_address,
@@ -125,8 +126,37 @@ defmodule Nerves.NetworkInterface.Worker do
     { :ok, %Nerves.NetworkInterface.Worker{port: port} }
   end
 
+  #Returns intersection of lists a and b
+  defp intersect(a, b), do: a -- (a -- b)
+
+  # Returns list of interfaces to be managed by Nerves.NetworkInterface and Nerves.Network modules
+  # By default this is list of ALL network interfaces available in the system. It can be reduced
+  # by specifying a list of interfaces we want to be managed by Nerves.Network sub-system in the 
+  # .../config/config.exs file.
+  defp get_managed_interfaces(available_interfaces) do
+    managed_interfaces = Application.get_env(:nerves_network_interface, :managed_interfaces, [])
+    Logger.debug "#{__MODULE__}: managed_interfaces = #{inspect managed_interfaces}"
+
+    case managed_interfaces do
+      "all" -> available_interfaces
+      nil -> available_interfaces
+      [] -> available_interfaces
+      _ -> managed_interfaces
+    end
+  end
+
+  def handle_call(:all_interfaces, _from, state) do
+    available_interfaces = call_port(state, :interfaces, [])
+    {:reply, available_interfaces, state }
+  end
+
   def handle_call(:interfaces, _from, state) do
-    response = call_port(state, :interfaces, [])
+    available_interfaces = call_port(state, :interfaces, [])
+    response =
+      get_managed_interfaces(available_interfaces)
+        |> intersect(available_interfaces)
+    Logger.debug "#{__MODULE__}: response: #{inspect response}"
+    IO.puts "#{__MODULE__}: response: #{inspect response}"
     {:reply, response, state }
   end
   def handle_call({:status, ifname}, _from, state) do

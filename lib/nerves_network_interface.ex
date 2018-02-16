@@ -33,7 +33,7 @@ defmodule Nerves.NetworkInterface do
   need to change any parameters or bring up or down an interface, you should
   ensure that the port process is running as a privileged user.
   """
-  
+
   @type interface_name :: String.t
   @type registration :: 
     {:ok, pid} |
@@ -98,19 +98,19 @@ defmodule Nerves.NetworkInterface do
   Returns `:ok` on success or `{:error, reason}` if an error occurs.
   """
   defdelegate setup(ifname, options), to: Nerves.NetworkInterface.Worker
-  
+
   @doc """
   Register for Nerves.NetworkInterface events on a specific interface
-  
+
   The calling process is the process that will be registered for 
   all events. The events can be handled by implementing a `handle_info\2`.
-  
+
   `def handle_info({Nerves.NetworkInterface, :ifchanged, ifstate} = event, state)`
-  
+
   Use :all to register for events from all interfaces.
-  
+
   The registration registers for messages dispatched out of `Registry`.
-  
+
   For information on how `Registry` works please see that module's
   documentation.
   """
@@ -121,7 +121,7 @@ defmodule Nerves.NetworkInterface do
   def register(:all) do
     Enum.each(interfaces(), &register/1)
   end
-  
+
   def register(ifname) do
     Registry.register(Nerves.NetworkInterface, ifname, [])
   end

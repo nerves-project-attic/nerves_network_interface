@@ -27,6 +27,8 @@
 #include <net/if_arp.h>
 #include <net/if.h>
 #include <net/route.h>
+#include <sys/types.h> 
+#include <sys/socket.h>
 #include <linux/if.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>

@@ -48,9 +48,11 @@
 
 //#define DEBUG
 #ifdef DEBUG
-#define debug(...) do { fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\r\n"); } while(0)
+#define debug(format, ...)  fprintf(stderr, format, __VA_ARGS__); fprintf(stderr, "\r\n")
+#define debugf(string) fprintf(stderr, string); fprintf(stderr, "\r\n")
 #else
-#define debug(...)
+#define debug(format, ...)
+#define debugf(string)
 #endif
 
 struct netif {
@@ -276,7 +278,7 @@ static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
     struct ifinfomsg *ifm = mnl_nlmsg_get_payload(nlh);
 
     if (mnl_attr_parse(nlh, sizeof(*ifm), collect_if_attrs, tb) != MNL_CB_OK) {
-        debug("Error from mnl_attr_parse");
+        debugf("Error from mnl_attr_parse");
         return MNL_CB_ERROR;
     }
 
@@ -298,6 +300,7 @@ static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
     encode_kv_bool(nb, "is_running", ifm->ifi_flags & IFF_RUNNING);
     encode_kv_bool(nb, "is_lower_up", ifm->ifi_flags & WORKAROUND_IFF_LOWER_UP);
     encode_kv_bool(nb, "is_multicast", ifm->ifi_flags & IFF_MULTICAST);
+    encode_kv_bool(nb, "is_all-multicast", ifm->ifi_flags & IFF_ALLMULTI);
 
     if (tb[IFLA_MTU])
         encode_kv_ulong(nb, "mtu", mnl_attr_get_u32(tb[IFLA_MTU]));
@@ -469,7 +472,7 @@ static void netif_handle_status_callback(struct netif *nb, int bytecount)
     ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
     ei_encode_atom(nb->resp, &nb->resp_index, "ok");
     if (mnl_cb_run(nb->nlbuf, bytecount, nb->response_seq, nb->response_portid, netif_build_ifinfo, nb) < 0) {
-        debug("error from or mnl_cb_run?");
+        debugf("error from or mnl_cb_run?");
         nb->resp_index = original_resp_index;
         erlcmd_encode_errno_error(nb->resp, &nb->resp_index, errno);
     }
@@ -1204,7 +1207,7 @@ static int get_mac_address_ioctl(const struct ip_setting_handler *handler, struc
     if (addr->sin_family == AF_UNIX) {
         encode_kv_macaddr(nb, handler->name, (unsigned char *) &ifr.ifr_hwaddr.sa_data);
     } else {
-        debug("got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
+        debug("Got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
         nb->last_error = EINVAL;
         return -1;
     }
@@ -1334,7 +1337,7 @@ static int get_ipaddr_ioctl(const struct ip_setting_handler *handler, struct net
         }
         encode_kv_string(nb, handler->name, addrstr);
     } else {
-        debug("got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
+        debug("Got unexpected sin_family %d for '%s'", addr->sin_family, handler->name);
         nb->last_error = EINVAL;
         return -1;
     }
@@ -1586,6 +1589,7 @@ static int remove_all_gateways6(struct netif *nb, const char *ifname)
     /* There may be more than one gateway. Remove all of them. */
     for (;;) {
         int rc = ioctl(nb->inet6_fd, SIOCDELRT, &route);
+        debug("Removing GW returnt rc = %d\r\n", rc);
         if (rc < 0) {
             if (errno == ESRCH) {
                 return 0;
@@ -1600,6 +1604,8 @@ static int remove_all_gateways6(struct netif *nb, const char *ifname)
 
 static int add_default_gateway(struct netif *nb, const char *ifname, const char *gateway_ip)
 {
+    debug("add_default_gateway %s %s", ifname, gateway_ip);
+
     struct rtentry route;
     memset(&route, 0, sizeof(route));
 
@@ -1631,6 +1637,8 @@ static int add_default_gateway(struct netif *nb, const char *ifname, const char 
         nb->last_error = errno;
         return -1;
     }
+
+    debug("add_default_gateway ok %s", ifname);
     return 0;
 }
 
@@ -1721,8 +1729,11 @@ static int set_default_gateway(const struct ip_setting_handler *handler, struct 
     (void) handler;
     const char *gateway = context;
 
+    debug("set_default_gateway %s", ifname);
+
     // Before one can be set, any configured gateways need to be removed.
     if (remove_all_gateways(nb, ifname) < 0) {
+
         debug("remove_all_gateways failed for '%s' : %s", handler->name, gateway);
         return -1;
     }
@@ -1866,7 +1877,7 @@ static void netif_request_handler(const char *req, void *cookie)
         errx(EXIT_FAILURE, "expecting command atom");
 
     if (strcmp(cmd, "interfaces") == 0) {
-        debug("interfaces");
+        debugf("interfaces");
         netif_handle_interfaces(nb);
     } else if (strcmp(cmd, "status") == 0) {
         if (erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)

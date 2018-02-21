@@ -675,6 +675,7 @@ static void find_default_gateway6(struct netif *nb,
 
 struct ip_setting_handler {
     const char *name;
+
     int (*prep)(const struct ip_setting_handler *handler, struct netif *nb, void **context);
     int (*set)(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
     int (*get)(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
@@ -682,6 +683,12 @@ struct ip_setting_handler {
     // data for handlers
     int ioctl_set;
     int ioctl_get;
+};
+
+struct ip_handlers_descr {
+  const char *name;
+  const struct ip_setting_handler *handlers;
+  int count;
 };
 
 static int prep_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context);
@@ -721,25 +728,120 @@ static int get_ipv6_forwarding(const struct ip_setting_handler *handler, struct 
 
 static const struct ip_handlers_descr *find_descriptor(const char *name);
 
-// These handlers are listed in the order that they should be invoked when
+// These R/W handlers are listed in the order that they should be invoked when
 // configuring the interface. For example, "ipv4_gateway" is listed at the end
 // so that it is set after the address and subnet_mask. If this is not done,
 // setting the gateway may fail since Linux thinks that it is on the wrong subnet.
-static const struct ip_setting_handler handlers[] = {
-  { "ipv4_address", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFADDR, SIOCGIFADDR },
-  { "ipv6_address", prep_ipaddr6_ioctl, set_ipaddr6_ioctl, get_ipaddr6, SIOCSIFADDR, 0 },
-  { "ipv4_subnet_mask", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFNETMASK, SIOCGIFNETMASK },
-  { "ipv4_broadcast", prep_ipaddr_ioctl, set_ipaddr_ioctl, get_ipaddr_ioctl, SIOCSIFBRDADDR,SIOCGIFBRDADDR },
-  { "ipv4_gateway", prep_default_gateway, set_default_gateway, get_default_gateway, 0, 0 },
-  { "ipv6_gateway", prep_default_gateway6, set_default_gateway6, get_default_gateway6, 0, 0 },
-  { "mac_address", prep_mac_address_ioctl, set_mac_address_ioctl, get_mac_address_ioctl, SIOCSIFHWADDR, SIOCGIFHWADDR },
-  { "ipv6_autoconf", prep_ipv6_autoconf, set_ipv6_autoconf, get_ipv6_autoconf, 0, 0 },
-  { "ipv6_disable", prep_ipv6_disable, set_ipv6_disable, get_ipv6_disable, 0, 0 },
-  { "ipv6_accept_ra", prep_ipv6_accept_ra, set_ipv6_accept_ra, get_ipv6_accept_ra, 0, 0 },
-  { "ipv6_accept_ra_pinfo", prep_ipv6_accept_ra_pinfo, set_ipv6_accept_ra_pinfo, get_ipv6_accept_ra_pinfo, 0, 0 },
-  { "ipv6_forwarding", prep_ipv6_forwarding, set_ipv6_forwarding, get_ipv6_forwarding, 0, 0 },
+static const struct ip_setting_handler rw_handlers[] = {
+  { .name = "ipv4_address",
+    .prep = prep_ipaddr_ioctl,
+    .set  = set_ipaddr_ioctl,
+    .get  = get_ipaddr_ioctl,
+    .ioctl_set = SIOCSIFADDR,
+    .ioctl_get = SIOCGIFADDR,
+  },
+  { .name = "ipv6_address",
+    .prep = prep_ipaddr6_ioctl,
+    .set  = set_ipaddr6_ioctl,
+    .get  = get_ipaddr6,
+    .ioctl_set = SIOCSIFADDR,
+    .ioctl_get = 0,
+  },
+  { .name = "ipv4_subnet_mask",
+    .prep = prep_ipaddr_ioctl,
+    .set  = set_ipaddr_ioctl,
+    .get  = get_ipaddr_ioctl,
+    .ioctl_set = SIOCSIFNETMASK,
+    .ioctl_get = SIOCGIFNETMASK,
+  },
+  { .name = "ipv4_broadcast",
+    .prep = prep_ipaddr_ioctl,
+    .set  = set_ipaddr_ioctl,
+    .get  = get_ipaddr_ioctl,
+    .ioctl_set  = SIOCSIFBRDADDR,
+    .ioctl_get  = SIOCGIFBRDADDR,
+  },
+  { .name = "ipv4_gateway",
+    .prep = prep_default_gateway,
+    .set  = set_default_gateway,
+    .get  = get_default_gateway,
+    .ioctl_set = 0,
+    .ioctl_get = 0,
+  },
+  { .name = "ipv6_gateway",
+    .prep = prep_default_gateway6,
+    .set  = set_default_gateway6,
+    .get  = get_default_gateway6,
+    .ioctl_set = 0,
+    .ioctl_get = 0,
+  },
+  { .name = "mac_address",
+    .prep = prep_mac_address_ioctl,
+    .set  = set_mac_address_ioctl,
+    .get  = get_mac_address_ioctl,
+    .ioctl_set = SIOCSIFHWADDR,
+    .ioctl_get = SIOCGIFHWADDR,
+  },
+  { .name = "ipv6_autoconf",
+    .prep = prep_ipv6_autoconf,
+    .set  = set_ipv6_autoconf,
+    .get  = get_ipv6_autoconf,
+    .ioctl_set = 0,
+    .ioctl_get = 0,
+  },
+  { .name = "ipv6_disable",
+    .prep = prep_ipv6_disable,
+    .set  = set_ipv6_disable,
+    .get  = get_ipv6_disable,
+    .ioctl_set = 0,
+    .ioctl_get = 0,
+  },
+  { .name = "ipv6_accept_ra",
+    .prep = prep_ipv6_accept_ra,
+    .set  = set_ipv6_accept_ra,
+    .get  = get_ipv6_accept_ra,
+    .ioctl_set = 0,
+    .ioctl_get = 0,
+  },
+  { .name = "ipv6_accept_ra_pinfo",
+    .prep = prep_ipv6_accept_ra_pinfo,
+    .set  = set_ipv6_accept_ra_pinfo,
+    .get  = get_ipv6_accept_ra_pinfo,
+    .ioctl_set = 0,
+    .ioctl_get = 0,
+  },
+  { .name = "ipv6_forwarding",
+    .prep = prep_ipv6_forwarding,
+    .set  = set_ipv6_forwarding,
+    .get  = get_ipv6_forwarding,
+    .ioctl_set = 0,
+    .ioctl_get = 0,
+  },
+  { .name = NULL, } /* Setting-up a guard */
 };
-#define HANDLER_COUNT (sizeof(handlers) / sizeof(handlers[0]))
+#define HANDLER_COUNT(handlers) ((sizeof(handlers)-1) / sizeof(handlers[0])) /* -1 is for the guard at the end of the array */
+
+/* Write-only handlers - these will not be shown in settings */
+static const struct ip_setting_handler wo_handlers[] = {
+    { .name = "-ipv6_address",
+      .prep = prep_ipaddr6_ioctl,
+      .set  = remove_ipaddr6_ioctl,
+      .get  = NULL,
+      .ioctl_set = SIOCDIFADDR,
+      .ioctl_get = 0,
+    },
+    {NULL, NULL, NULL, NULL, 0, 0, } /* Setting-up a guard */
+};
+
+#define NETIF_RW_DESCR_NAME "rw"
+#define NETIF_WO_DESCR_NAME "wo"
+
+struct ip_handlers_descr handlers_descr[] = {
+  {.name = NETIF_RW_DESCR_NAME, .handlers = &rw_handlers[0], .count = HANDLER_COUNT(rw_handlers), },
+  {.name = NETIF_WO_DESCR_NAME, .handlers = &wo_handlers[0], .count = HANDLER_COUNT(wo_handlers), },
+  {.name = NULL, .handlers = NULL, .count = 0}
+};
+
 
 static int prep_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context)
 {
@@ -1776,15 +1878,27 @@ static void netif_handle_get(struct netif *nb,
     start_response(nb);
     int original_resp_index = nb->resp_index;
 
+    const struct ip_handlers_descr *handlers_descr = find_descriptor(NETIF_RW_DESCR_NAME);
+
+    debug("handlers_descr = %p", (void *) handlers_descr);
+
+    if(handlers_descr != NULL) {
+      const struct ip_setting_handler *handler = handlers_descr->handlers;
+
+      debug("handlers_descr-> count = %d", handlers_descr->count);
+
       ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
       ei_encode_atom(nb->resp, &nb->resp_index, "ok");
-    ei_encode_map_header(nb->resp, &nb->resp_index, HANDLER_COUNT);
+      ei_encode_map_header(nb->resp, &nb->resp_index, handlers_descr->count);
 
       nb->last_error = 0;
-    for (size_t i = 0; i < HANDLER_COUNT; i++) {
-        const struct ip_setting_handler *handler = &handlers[i];
-        if (handler->get(handler, nb, ifname) < 0)
-            break;
+
+      for (handler = handlers_descr->handlers; (handler->name != NULL && handler->get(handler, nb, ifname) >= 0); handler++) {
+          debug("handler = %p; .name = '%s'", (void *) handler, handler->name);
+      }
+    } else {
+      debugf("handlers_descr = NULL");
+      nb->last_error = EOPNOTSUPP;
     }
 
     if (nb->last_error) {
@@ -1794,14 +1908,32 @@ static void netif_handle_get(struct netif *nb,
     send_response(nb);
 }
 
+static const struct ip_handlers_descr *find_descriptor(const char *name)
+{
+  const struct ip_handlers_descr *descr = &handlers_descr[0];
+
+  for(; descr->name != NULL; descr++) {
+    if (strcmp(descr->name, name) == 0)
+      return descr;
+  }
+
+  return NULL;
+}
+
 static const struct ip_setting_handler *find_handler(const char *name)
 {
-    for (size_t i = 0; i < HANDLER_COUNT; i++) {
-        const struct ip_setting_handler *handler = &handlers[i];
-        if (strcmp(handler->name, name) == 0)
+  const struct ip_handlers_descr *descriptor = &handlers_descr[0];
+
+  for(; descriptor->name != NULL; descriptor++) {
+        const struct ip_setting_handler *handler = descriptor->handlers;
+
+        for(; handler->name != NULL; handler++) {
+          if (strcmp(handler->name, name) == 0)
             return handler;
+        }
   }
-  return NULL;
+
+  return NULL; /* No corresponding handler found */
 }
 
 static void netif_handle_set(struct netif *nb,
@@ -1815,34 +1947,38 @@ static void netif_handle_set(struct netif *nb,
     if (ei_decode_map_header(nb->req, &nb->req_index, &arity) < 0)
         errx(EXIT_FAILURE, "setting attributes requires a map");
 
-    void *handler_context[HANDLER_COUNT];
-    memset(handler_context, 0, sizeof(handler_context));
-
     // Parse all options
     for (int i = 0; i < arity && nb->last_error == 0; i++) {
-        char name[32];
+        char name[32] = {'\0', };
+
         if (erlcmd_decode_atom(nb->req, &nb->req_index, name, sizeof(name)) < 0)
             errx(EXIT_FAILURE, "error in map encoding");
 
+        debug("[%s %d]: setting %s\r\n", __FILE__, __LINE__, name);
+
         // Look up the option. If we don't know it, silently ignore it so that
         // the caller can pass in maps that contain options for other code.
-        const struct ip_setting_handler *handler = find_handler(name);
-        if (handler)
-            handler->prep(handler, nb, &handler_context[handler - handlers]);
-        else
+        const struct ip_setting_handler *handler = (const struct ip_setting_handler *) find_handler(name);
+
+        if (handler != NULL) {
+            void *ctx = NULL;
+
+            handler->prep(handler, nb, &ctx);
+
+            if ((!nb->last_error) && (ctx != NULL)) { /* No error occurred at the preps */
+              handler->set(handler, nb, ifname, ctx);
+              /* We can now free allocated resources */
+              if(ctx != NULL) {
+                free(ctx);
+              }
+            }
+        } else {
             ei_skip_term(nb->req, &nb->req_index);
         }
-
-    // If no errors, then set everything
-    if (!nb->last_error) {
-        // Order is important: see note on handlers
-        for (size_t i = 0; i < HANDLER_COUNT; i++) {
-            if (handler_context[i]) {
-                handlers[i].set(&handlers[i], nb, ifname, handler_context[i]);
-                free(handler_context[i]);
-            }
-        }
     }
+
+
+    debug("[%s %d]: last_error = %d\r\n", __FILE__, __LINE__, nb->last_error);
 
     // Encode and send the response
     if (nb->last_error)
@@ -1895,8 +2031,10 @@ static void netif_request_handler(const char *req, void *cookie)
     } else if (strcmp(cmd, "setup") == 0) {
         if (ei_decode_tuple_header(nb->req, &nb->req_index, &arity) < 0 ||
                 arity != 2 ||
-                erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0)
+                erlcmd_decode_string(nb->req, &nb->req_index, ifname, IFNAMSIZ) < 0) {
+            debugf("setup requires {ifname, parameters}");
             errx(EXIT_FAILURE, "setup requires {ifname, parameters}");
+        }
         debug("set: %s", ifname);
         netif_handle_set(nb, ifname);
     } else if (strcmp(cmd, "settings") == 0) {

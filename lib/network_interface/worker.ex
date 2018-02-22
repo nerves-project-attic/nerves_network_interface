@@ -186,7 +186,7 @@ defmodule Nerves.NetworkInterface.Worker do
 
   def handle_info({_, {:data, <<?n, message::binary>>}}, state) do
     {notif, data} = :erlang.binary_to_term(message)
-    Logger.info "nerves_network_interface received #{inspect notif} and #{inspect data}"
+    Logger.debug "nerves_network_interface received #{inspect notif} and #{inspect data}"
     Registry.dispatch(Nerves.NetworkInterface, data.ifname, fn entries ->
       for {pid, _} <- entries do
         send(pid, {Nerves.NetworkInterface, notif, data})

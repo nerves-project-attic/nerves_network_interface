@@ -1853,10 +1853,10 @@ static int get_default_gateway(const struct ip_setting_handler *handler, struct 
 
 static size_t netif_count_rw_handlers()
 {
-  const struct ip_setting_handler *handler = &handlers[0];
+  const struct ip_setting_handler *handler;
   size_t count = 0;
 
-  for(; handler->name != NULL; handler++) {
+  for(handler = &handlers[0]; handler->name != NULL; handler++) {
     if(handler->get != NULL) {
       count++;
     }
@@ -1943,9 +1943,9 @@ static void netif_handle_set(struct netif *nb,
 
   // If no errors, then set everything
   if (!nb->last_error) {
-    size_t i = 0;
+    size_t i;
     // Order is important: see note on handlers
-    for (; i < HANDLER_COUNT; i++) {
+    for (i = 0; i < HANDLER_COUNT; i++) {
       if (handler_context[i]) {
         handlers[i].set(&handlers[i], nb, ifname, handler_context[i]);
       }
@@ -1954,8 +1954,8 @@ static void netif_handle_set(struct netif *nb,
 
   /* Let's free all contextes that had been allocated above by the prep handlers */
   {
-    size_t i = 0;
-    for (; i < HANDLER_COUNT; i++) {
+    size_t i;
+    for (i = 0; i < HANDLER_COUNT; i++) {
       if (handler_context[i]) {
         free(handler_context[i]);
         handler_context[i] = NULL;

@@ -27,7 +27,7 @@
 #include <net/if_arp.h>
 #include <net/if.h>
 #include <net/route.h>
-#include <sys/types.h> 
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <linux/if.h>
 #include <linux/netlink.h>
@@ -709,7 +709,9 @@ static int prep_ipv6_accept_ra(const struct ip_setting_handler *handler, struct 
 static int set_ipv6_accept_ra(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
 static int get_ipv6_accept_ra(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
 static int ifname_to_index(struct netif *nb, const char *ifname);
-static int add_default_gateway6(struct netif *nb, const char *ifname, const char *gateway_ip);
+static int add_default_gateway6(struct netif *nb, const char *ifname, const char *gateway_ip, const unsigned short flags);
+static int remove_gateway6_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
+static int remove_gateway6(struct netif *nb, const char *ifname, const char *gateway_ip, const unsigned short flags);
 static int prep_ipv6_disable(const struct ip_setting_handler *handler, struct netif *nb, void **context);
 static int set_ipv6_disable(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
 static int get_ipv6_disable(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
@@ -815,6 +817,13 @@ static const struct ip_setting_handler handlers[] = {
     .set  = remove_ipaddr6_ioctl,
     .get  = NULL,
     .ioctl_set = SIOCDIFADDR,
+    .ioctl_get = 0,
+  },
+  { .name = "-ipv6_gateway",
+    .prep = prep_default_gateway6,
+    .set  = remove_gateway6_ioctl,
+    .get  = NULL,
+    .ioctl_set = SIOCDELRT,
     .ioctl_get = 0,
   },
   { .name = NULL, } /* Setting-up a guard */
@@ -1650,6 +1659,43 @@ static int remove_all_gateways(struct netif *nb, const char *ifname)
     }
 }
 
+static int remove_gateway6(struct netif *nb, const char *ifname, const char *gateway_ip, const unsigned short flags)
+{
+  struct in6_rtmsg route = {0, };
+  struct in6_addr *gw  = (struct in6_addr *) &route.rtmsg_gateway;
+  struct in6_addr *dst = (struct in6_addr *) &route.rtmsg_dst;
+  int rc = 0;
+
+  *dst = in6addr_any;
+
+  if (inet_pton(AF_INET6, gateway_ip, (void *) gw) <= 0) {
+    debug("Bad IP address for the default gateway v6: %s", gateway_ip);
+    nb->last_error = EINVAL;
+    return -1;
+  }
+
+  route.rtmsg_dst_len = 0;
+  route.rtmsg_ifindex = ifname_to_index(nb, ifname);
+  route.rtmsg_flags   = RTF_UP | RTF_GATEWAY | flags; /* if the RTF_GATEWAY flag is set the gateway ip must exactly mach the one in the fib table */
+  route.rtmsg_metric  = 256;
+
+  rc = ioctl(nb->inet6_fd, SIOCDELRT, &route);
+
+  debug("Removing GW returnt rc = %d\r\n", rc);
+
+  if (rc  < 0) {
+    if (errno == ESRCH) {
+      return 0;
+    } else {
+      nb->last_error = errno;
+      debug("Removing GW returnt rc = %d; errno = %d '%s'\r\n", rc, errno, strerror(errno));
+      return -1;
+    }
+  }
+
+  return 0;
+}
+
 static int remove_all_gateways6(struct netif *nb, const char *ifname)
 {
     struct in6_rtmsg route = {0, };
@@ -1745,17 +1791,31 @@ static int set_default_gateway6(const struct ip_setting_handler *handler, struct
     (void) handler;
     const char *gateway = context;
 
+#if defined(NETIF_FLUSH_GATEWAYS) && (NETIF_FLUSH_GATEWAYS)
     // Before one can be set, any configured gateways need to be removed.
     if (remove_all_gateways6(nb, ifname) < 0) {
         debug("remove_all_gateways6 failed for '%s' : %s", handler->name, gateway);
         return -1;
     }
+#endif
 
     // If no gateway was specified, then we're done.
     if (*gateway == '\0')
         return 0;
 
-    return add_default_gateway6(nb, ifname, gateway);
+    return add_default_gateway6(nb, ifname, gateway, 0);
+}
+
+static int remove_gateway6_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
+{
+    (void) handler;
+    const char *gateway = context;
+
+    // If no gateway was specified, then we're done.
+    if (*gateway == '\0')
+        return 0;
+
+    return remove_gateway6(nb, ifname, gateway, 0);
 }
 
 static int get_default_gateway6(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
@@ -1774,7 +1834,7 @@ static int get_default_gateway6(const struct ip_setting_handler *handler, struct
     return 0;
 }
 
-static int add_default_gateway6(struct netif *nb, const char *ifname, const char *gateway_ip)
+static int add_default_gateway6(struct netif *nb, const char *ifname, const char *gateway_ip, const unsigned short flags)
 {
     struct in6_rtmsg route = {0, };
     struct in6_addr *dst = (struct in6_addr *) &route.rtmsg_dst;
@@ -1789,8 +1849,8 @@ static int add_default_gateway6(struct netif *nb, const char *ifname, const char
     }
 
     route.rtmsg_dst_len = 0; /* router does not have to have a prefix */
-    route.rtmsg_flags   = RTF_UP | RTF_GATEWAY;
-    route.rtmsg_metric  = 0;
+    route.rtmsg_flags = RTF_UP | RTF_GATEWAY | flags;
+    route.rtmsg_metric  = 256;
     route.rtmsg_ifindex = ifname_to_index(nb, ifname);
 
     int rc = ioctl(nb->inet6_fd, SIOCADDRT, &route);

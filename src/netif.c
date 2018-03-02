@@ -711,7 +711,7 @@ static int get_ipv6_accept_ra(const struct ip_setting_handler *handler, struct n
 static int ifname_to_index(struct netif *nb, const char *ifname);
 static int add_default_gateway6(struct netif *nb, const char *ifname, const char *gateway_ip, const unsigned short flags);
 static int remove_gateway6_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
-static int remove_gateway6(struct netif *nb, const char *ifname, const char *gateway_ip, const unsigned short flags);
+static int remove_gateway6(struct netif *nb, const char *ifname, const struct in6_addr *gw_addr, const unsigned short flags);
 static int prep_ipv6_disable(const struct ip_setting_handler *handler, struct netif *nb, void **context);
 static int set_ipv6_disable(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
 static int get_ipv6_disable(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
@@ -1659,20 +1659,15 @@ static int remove_all_gateways(struct netif *nb, const char *ifname)
     }
 }
 
-static int remove_gateway6(struct netif *nb, const char *ifname, const char *gateway_ip, const unsigned short flags)
+static int remove_gateway6(struct netif *nb, const char *ifname, const struct in6_addr *gw_addr, const unsigned short flags)
 {
   struct in6_rtmsg route = {0, };
   struct in6_addr *gw  = (struct in6_addr *) &route.rtmsg_gateway;
   struct in6_addr *dst = (struct in6_addr *) &route.rtmsg_dst;
   int rc = 0;
 
+  *gw  = *gw_addr;
   *dst = in6addr_any;
-
-  if (inet_pton(AF_INET6, gateway_ip, (void *) gw) <= 0) {
-    debug("Bad IP address for the default gateway v6: %s", gateway_ip);
-    nb->last_error = EINVAL;
-    return -1;
-  }
 
   route.rtmsg_dst_len = 0;
   route.rtmsg_ifindex = ifname_to_index(nb, ifname);
@@ -1791,14 +1786,6 @@ static int set_default_gateway6(const struct ip_setting_handler *handler, struct
     (void) handler;
     const char *gateway = context;
 
-#if defined(NETIF_FLUSH_GATEWAYS) && (NETIF_FLUSH_GATEWAYS)
-    // Before one can be set, any configured gateways need to be removed.
-    if (remove_all_gateways6(nb, ifname) < 0) {
-        debug("remove_all_gateways6 failed for '%s' : %s", handler->name, gateway);
-        return -1;
-    }
-#endif
-
     // If no gateway was specified, then we're done.
     if (*gateway == '\0')
         return 0;
@@ -1808,14 +1795,25 @@ static int set_default_gateway6(const struct ip_setting_handler *handler, struct
 
 static int remove_gateway6_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
 {
-    (void) handler;
-    const char *gateway = context;
+  (void) handler;
+  const char *gateway_ip = context;
+  struct in6_addr gw     = in6addr_any;
 
-    // If no gateway was specified, then we're done.
-    if (*gateway == '\0')
-        return 0;
+  /* If IPv6 gateway's address is an empty string "", then we remove all */
+  if (*gateway_ip == '\0')
+    return remove_all_gateways6(nb, ifname);
 
-    return remove_gateway6(nb, ifname, gateway, 0);
+  if (inet_pton(AF_INET6, gateway_ip, (void *) &gw) <= 0) {
+    debug("Bad IP address for the default gateway v6: %s", gateway_ip);
+    nb->last_error = EINVAL;
+    return -1;
+  }
+
+  /* If IPv6 gateway-for-removal's address is ANY i.e. :: all default gateways ar targetted for removal */
+  if(memcmp(&gw, &in6addr_any, sizeof(struct in6_addr)) == 0)
+    return remove_all_gateways6(nb, ifname);
+
+  return remove_gateway6(nb, ifname, &gw, 0);
 }
 
 static int get_default_gateway6(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
@@ -1849,8 +1847,8 @@ static int add_default_gateway6(struct netif *nb, const char *ifname, const char
     }
 
     route.rtmsg_dst_len = 0; /* router does not have to have a prefix */
-    route.rtmsg_flags = RTF_UP | RTF_GATEWAY | flags;
-    route.rtmsg_metric  = 256;
+    route.rtmsg_flags   = RTF_UP | RTF_GATEWAY | flags;
+    route.rtmsg_metric  = 1;
     route.rtmsg_ifindex = ifname_to_index(nb, ifname);
 
     int rc = ioctl(nb->inet6_fd, SIOCADDRT, &route);

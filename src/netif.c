@@ -1676,7 +1676,7 @@ static int remove_gateway6(struct netif *nb, const char *ifname, const struct in
 
   rc = ioctl(nb->inet6_fd, SIOCDELRT, &route);
 
-  debug("Removing GW returnt rc = %d\r\n", rc);
+  debug("Removing GW returned rc = %d\r\n", rc);
 
   if (rc  < 0) {
     if (errno == ESRCH) {

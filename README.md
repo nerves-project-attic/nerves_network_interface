@@ -1,5 +1,5 @@
 # Nerves.NetworkInterface
-[![Build Status](https://travis-ci.org/nerves-project/nerves_network_interface.svg?branch=master)](https://travis-ci.org/nerves-project/nerves_network_interface)
+[![CircleCI](https://circleci.com/gh/nerves-project/nerves_network_interface.svg?style=svg)](https://circleci.com/gh/nerves-project/nerves_network_interface)
 
 This package enables Elixir applications to configure, get the status of,
 and listen to events from LAN and WiFi network interfaces. It is not meant

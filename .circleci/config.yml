@@ -1,0 +1,18 @@
+# Elixir CircleCI 2.0 configuration file
+#
+# Check https://circleci.com/docs/2.0/language-elixir/ for more details
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/elixir:1.6.3
+    working_directory: ~/repo
+    environment:
+      MIX_ENV: dev
+    steps:
+      - checkout
+      - run: sudo apt update -q && sudo apt install libmnl-dev
+      - run: mix local.hex --force
+      - run: mix deps.get
+      - run: mix test
+      - run: mix docs

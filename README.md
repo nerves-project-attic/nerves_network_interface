@@ -124,7 +124,7 @@ Events sent by `Nerves.NetworkInterface` include:
   * `ifadded` - an interface was hotplugged (e.g., a USB wifi dongle)
   * `ifrenamed` - an interface was renamed (e.g., `wlan0` is now
     `wlxc83a35ca5f10`
-  * `ifchanged` - an interface changed statue (e.g., it was down, but now it's
+  * `ifchanged` - an interface changed status (e.g., it was down, but now it's
     up)
   * `ifremoved` - an interface was removed (e.g., the user removed a USB wifi
     dongle)

@@ -21,10 +21,10 @@ ifeq ($(CROSSCOMPILE),)
         $(warning this should be done automatically.)
         $(warning .)
         $(warning Skipping C compilation unless targets explicitly passed to make.)
-	DEFAULT_TARGETS = priv
+	DEFAULT_TARGETS = 
     endif
 endif
-DEFAULT_TARGETS ?= priv priv/netif
+DEFAULT_TARGETS ?= priv/netif
 
 # Note: If crosscompiling, either ERL_PATH or both ERL_CFLAGS and ERL_LDFLAGS need
 #       to be specified or you'll get the host erl's versions and the linking step
@@ -66,10 +66,8 @@ all: $(DEFAULT_TARGETS)
 %.o: %.c
 	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) -o $@ $<
 
-priv:
-	mkdir -p priv
-
-priv/netif: src/erlcmd.o src/netif.o
+priv/netif: src/erlcmd.o src/netif.o src/netif_rtnetlink.o src/util.o
+	@mkdir -p priv
 	$(CC) $^ $(ERL_LDFLAGS) $(LDFLAGS) -o $@
 	# setuid root net_basic so that it can configure network interfaces
 	SUDO_ASKPASS=$(SUDO_ASKPASS) $(SUDO) -- sh -c 'chown root:root $@; chmod +s $@'

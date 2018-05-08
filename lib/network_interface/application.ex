@@ -7,8 +7,7 @@ defmodule Nerves.NetworkInterface.Application do
     import Supervisor.Spec, warn: false
 
     children = [
-      supervisor(Registry, [:duplicate, Nerves.NetworkInterface]),
-      worker(Nerves.NetworkInterface.Worker, []),
+      worker(Nerves.NetworkInterface, []),
     ]
 
     opts = [strategy: :rest_for_one, name: Nerves.NervesInterface.Supervisor]

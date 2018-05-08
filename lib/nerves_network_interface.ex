@@ -11,9 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 defmodule Nerves.NetworkInterface do
-
   @moduledoc """
   This module exposes a simplified view of Linux network configuration to
   applications.
@@ -34,63 +32,111 @@ defmodule Nerves.NetworkInterface do
   ensure that the port process is running as a privileged user.
   """
 
+  use GenServer
+  require Logger
+
+  alias SystemRegistry, as: SR
+  alias Nerves.NetworkInterface.{Rtnetlink, Config}
+
+
+  defstruct port: nil,
+            requests: [],
+            interfaces: [],
+            config: %{}
+
+  def start_link() do
+    GenServer.start_link(__MODULE__, [], name: __MODULE__)
+  end
+
+  def stop() do
+    GenServer.cast(__MODULE__, :stop)
+  end
+
+  def interfaces() do
+    GenServer.call(__MODULE__, :interfaces)
+  end
+
   @doc """
-  Return the list of network interfaces on this machine.
+  Refresh the current state of all interfaces.
   """
-  defdelegate interfaces, to: Nerves.NetworkInterface.Worker
+  def refresh() do
+    GenServer.call(__MODULE__, :refresh)
+  end
 
   @doc """
-  Return link-level status on the specified interface.
-
-  For example, `Nerves.NetworkInterface.status pid, "eth0"` could return:
-
-      {:ok,
-       %{ifname: "eth0", index: 2, is_broadcast: true, is_lower_up: true,
-         is_multicast: true, is_running: true, is_up: true,
-         mac_address: <<224, 219, 85, 231, 139, 93>>,
-         mac_broadcast: <<255, 255, 255, 255, 255, 255>>, mtu: 1500, operstate: :up,
-         stats: %{collisions: 0, multicast: 427, rx_bytes: 358417207, rx_dropped: 0,
-           rx_errors: 0, rx_packets: 301021, tx_bytes: 22813761, tx_dropped: 0,
-           tx_errors: 0, tx_packets: 212480}, type: :ethernet}}
-
-  If the interface doesn't exist, `{:error, :enodev}` is returned.
-  """
-  defdelegate status(ifname), to: Nerves.NetworkInterface.Worker
-
-  @doc """
-  Bring the specified interface up.
+  Send a message through the interface
 
   Returns `:ok` on success or `{:error, reason}` if an error occurs.
   """
-  defdelegate ifup(ifname), to: Nerves.NetworkInterface.Worker
+  def send(msg) do
+    GenServer.call(__MODULE__, {:send, msg})
+  end
 
-  @doc """
-  Bring the specified interface down.
+  def init([]) do
+    Logger.info "Start Network Interface Worker"
 
-  Returns `:ok` on success or `{:error, reason}` if an error occurs.
-  """
-  defdelegate ifdown(ifname), to: Nerves.NetworkInterface.Worker
+    executable = :code.priv_dir(:nerves_network_interface) ++ '/netif'
+    port = Port.open({:spawn_executable, executable},
+    [{:packet, 2}, :use_stdio, :binary])
+    s = %Nerves.NetworkInterface{port: port}
 
-  @doc """
-  Return the IP configuration for the specified interface as a map. See
-  `setup/3` for options.
+    call_port(s.port, :refresh, [])
 
-  Returns `{:ok, config}` on success or `{:error, reason}` if an error occurs.
-  """
-  defdelegate settings(ifname), to: Nerves.NetworkInterface.Worker
+    SR.register()
+    {:ok,  s}
+  end
 
-  @doc """
-  Set IP settings for the specified interface. The following options are
-  available:
+  def handle_call(:interfaces, _from, s) do
+    {:reply, s.interfaces, s}
+  end
 
-    * `:ipv4_address` - the IPv4 address of the interface
-    * `:ipv4_broadcast` - the IPv4 broadcast address for the interface
-    * `:ipv4_subnet_mask` - the IPv4 subnet mask
-    * `:ipv4_gateway` - the default gateway
+  def handle_call(:refresh, _from, s) do
+    response = call_port(s.port, :refresh, [])
+    {:reply, response, s}
+  end
+  def handle_call({:send, msg}, _from, s) do
+    response = call_port(s.port, :send, msg)
+    {:reply, response, s}
+  end
 
-  Options can be specified either as a keyword list or as a map.
+  def handle_cast(:stop, state) do
+    {:stop, :normal, state}
+  end
 
-  Returns `:ok` on success or `{:error, reason}` if an error occurs.
-  """
-  defdelegate setup(ifname, options), to: Nerves.NetworkInterface.Worker
+  def handle_info({:system_registry, :global, registry}, s) do
+    {config, msg} = Config.system_registry(registry, s.config, s.interfaces)
+    send_msg(msg, s.port)
+    {:noreply, %{s | config: config}}
+  end
+
+  def handle_info({_, {:data, <<?n, message::binary>>}}, state) do
+    msg = :erlang.binary_to_term(message)
+    Logger.info "nerves_network_interface received #{inspect msg}"
+    {:ok, t, interfaces} = Rtnetlink.decode(msg, state.interfaces)
+    SR.commit(t)
+    {:noreply, %{state | interfaces: interfaces}}
+  end
+
+  def handle_info({_, {:exit_status, _}}, state) do
+    {:stop, :unexpected_exit, state}
+  end
+
+  # Private helper functions
+  defp call_port(port, command, arguments) do
+    msg = {command, arguments}
+    send port, {self(), {:command, :erlang.term_to_binary(msg)}}
+    receive do
+      {_, {:data, <<?r, response::binary>>}} ->
+        :erlang.binary_to_term(response)
+    after
+      4_000 ->
+        # Not sure how this can be recovered
+        exit(:port_timed_out)
+    end
+  end
+
+  defp send_msg([], _port), do: :noop
+  defp send_msg(msg, port) do
+    call_port(port, :send, msg)
+  end
 end

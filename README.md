@@ -75,41 +75,100 @@ The `Nerves.NetworkInterface` application will start automatically.
 
 To see which interfaces are available, call `Nerves.NetworkInterface.interfaces\0`:
 
-    iex> Nerves.NetworkInterface.interfaces
-    ["lo", "eth0", "wlan0"]
+```elixir
+iex> Nerves.NetworkInterface.interfaces
+["lo", "eth0", "wlan0"]
+```
 
 To get link-level status information and statistics on an interface, call
 `Nerves.NetworkInterface.status/1`:
 
-    iex> Nerves.NetworkInterface.status "eth0"
-    {:ok, %{ifname: "eth0", index: 2, is_broadcast: true, is_lower_up: true,
-            is_multicast: true, is_running: true, is_up: true,
-            mac_address: "e0:db:55:e7:8b:53",
-            mac_broadcast: "ff:ff:ff:ff:ff:ff", mtu: 1500, operstate: :up,
-            stats: %{collisions: 0, multicast: 7, rx_bytes: 2561254, rx_dropped: 0,
-              rx_errors: 0, rx_packets: 5301, tx_bytes: 944159, tx_dropped: 0,
-              tx_errors: 0, tx_packets: 3898}, type: :ethernet}
+```elixir
+iex> Nerves.NetworkInterface.status "eth0"
+{:ok, %{ifname: "eth0", index: 2, is_broadcast: true, is_lower_up: true,
+        is_multicast: true, is_running: true, is_up: true,
+        mac_address: "e0:db:55:e7:8b:53",
+        mac_broadcast: "ff:ff:ff:ff:ff:ff", mtu: 1500, operstate: :up,
+        stats: %{collisions: 0, multicast: 7, rx_bytes: 2561254, rx_dropped: 0,
+          rx_errors: 0, rx_packets: 5301, tx_bytes: 944159, tx_dropped: 0,
+          tx_errors: 0, tx_packets: 3898}, type: :ethernet}
+```
 
 Polling `Nerves.NetworkInterface` for status isn't that great, so it's possible to
-register to the `Nerves.NetworkInterface` Registry.
+register to events via [`SystemRegistry`](https://github.com/nerves-project/system_registry)
 
 The following example shows how to view events at the prompt:
 
 ```elixir
-iex> Registry.register(Nerves.NetworkInterface, "eth0", [])
-{:ok, #PID<0.106.0>}
-iex> flush()
-:ok
+iex> SystemRegistry.register()
+{:ok, %{
+   state: %{
+     network_interface: %{
+       "eth0" => %{
+         ifname: "eth0",
+         index: 4,
+         is_broadcast: true,
+         is_lower_up: false,
+         is_multicast: true,
+         is_running: false,
+         is_up: true,
+         mac_address: "1c:1b:0d:0f:91:8d",
+         mac_broadcast: "ff:ff:ff:ff:ff:ff",
+         mtu: 1500,
+         operstate: :down,
+         stats: %{
+           collisions: 0,
+           multicast: 0,
+           rx_bytes: 0,
+           rx_dropped: 0,
+           rx_errors: 0,
+           rx_packets: 0,
+           tx_bytes: 0,
+           tx_dropped: 0,
+           tx_errors: 0,
+           tx_packets: 0
+         },
+         type: :ethernet
+       }
+     }
+   }
+ }
+}
 # Plug Ethernet cable in
 iex> flush()
-{Nerves.NetworkInterface, :ifchanged,
- %{ifname: "eth0", index: 2, is_broadcast: true, is_lower_up: true,
-   is_multicast: true, is_running: true, is_up: true,
-   mac_address: "e0:db:55:e7:8b:53",
-   mac_broadcast: "ff:ff:ff:ff:ff:ff", mtu: 1500, operstate: :up,
-   stats: %{collisions: 0, multicast: 14, rx_bytes: 3061718, rx_dropped: 0,
-     rx_errors: 0, rx_packets: 7802, tx_bytes: 1273557, tx_dropped: 0,
-     tx_errors: 0, tx_packets: 5068}, type: :ethernet}}
+{:ok, %{
+  state: %{
+    network_interface: %{
+      "eth0" => %{
+        ifname: "eth0",
+        index: 4,
+        is_broadcast: true,
+        is_lower_up: true,
+        is_multicast: true,
+        is_running: true,
+        is_up: true,
+        mac_address: "1c:1b:0d:0f:91:8d",
+        mac_broadcast: "ff:ff:ff:ff:ff:ff",
+        mtu: 1500,
+        operstate: :up,
+        stats:%{
+          collisions: 0,
+          multicast: 14,
+          rx_bytes: 3061718,
+          rx_dropped: 0,
+          rx_errors: 0,
+          rx_packets: 7802,
+          tx_bytes: 1273557,
+          tx_dropped: 0,
+          tx_errors: 0,
+          tx_packets: 5068
+        }
+        type: :ethernet
+      }
+    }
+  }
+ }
+}
 ```
 
 Events sent by `Nerves.NetworkInterface` include:

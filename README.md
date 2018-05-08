@@ -18,16 +18,10 @@ industrial environments. This includes:
 Currently only IPv4 is supported. If you use IPv6, I'd be interested in
 working with you to integrate IPv6 support.
 
-## Nerves.NetworkInterface or [Nerves.Networking](https://github.com/nerves-project/nerves_networking)?
+## Nerves.NetworkInterface or [Nerves.Network](https://github.com/nerves-project/nerves_network)?
 
-The purpose of Nerves.NetworkInterface is to handles low level access to Linux
-network interfaces. The Nerves.Networking module currently also takes care of
-the low level stuff, and also of IP address assignment. The low level
-functionality in Nerves.Networking should be removed in favor of
-Nerves.NetworkInterface. The
-[Nerves.InterimWifi](https://github.com/nerves-project/nerves_interim_wifi)
-project does already make use of the functionality offered by
-Nerves.NetworkInterface.
+The purpose of `Nerves.NetworkInterface` is to handles low level access to Linux
+network interfaces. `Nerves.Network` depends this project.
 
 ## Prerequisites
 
@@ -45,16 +39,12 @@ interfaces on your system, you can bypass the calls to sudo by setting the
 SUDO environment variable to `true`. I.e., `SUDO=true make`.
 
 ## Installation
-
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed as:
-
-  1. Add `nerves_network_interface` to your list of dependencies in `mix.exs`:
-
-        def deps do
-          [{:nerves_network_interface, "~> 0.3.2"}]
-        end
-
-  2. Run `mix deps.get` and `mix compile`
+Add `nerves_network_interface` to your list of dependencies in `mix.exs`:
+```elixir
+def deps do
+  [{:nerves_network_interface, "~> 0.3.2"}]
+end
+```
 
 ## Permissions
 
@@ -105,20 +95,22 @@ register to the `Nerves.NetworkInterface` Registry.
 
 The following example shows how to view events at the prompt:
 
-    iex> Registry.register(Nerves.NetworkInterface, "eth0", [])
-    {:ok, #PID<0.106.0>}
-    iex> flush()
-    :ok
-    # Plug Ethernet cable in
-    iex> flush()
-    {Nerves.NetworkInterface, :ifchanged,
-     %{ifname: "eth0", index: 2, is_broadcast: true, is_lower_up: true,
-       is_multicast: true, is_running: true, is_up: true,
-       mac_address: "e0:db:55:e7:8b:53",
-       mac_broadcast: "ff:ff:ff:ff:ff:ff", mtu: 1500, operstate: :up,
-       stats: %{collisions: 0, multicast: 14, rx_bytes: 3061718, rx_dropped: 0,
-         rx_errors: 0, rx_packets: 7802, tx_bytes: 1273557, tx_dropped: 0,
-         tx_errors: 0, tx_packets: 5068}, type: :ethernet}}
+```elixir
+iex> Registry.register(Nerves.NetworkInterface, "eth0", [])
+{:ok, #PID<0.106.0>}
+iex> flush()
+:ok
+# Plug Ethernet cable in
+iex> flush()
+{Nerves.NetworkInterface, :ifchanged,
+ %{ifname: "eth0", index: 2, is_broadcast: true, is_lower_up: true,
+   is_multicast: true, is_running: true, is_up: true,
+   mac_address: "e0:db:55:e7:8b:53",
+   mac_broadcast: "ff:ff:ff:ff:ff:ff", mtu: 1500, operstate: :up,
+   stats: %{collisions: 0, multicast: 14, rx_bytes: 3061718, rx_dropped: 0,
+     rx_errors: 0, rx_packets: 7802, tx_bytes: 1273557, tx_dropped: 0,
+     tx_errors: 0, tx_packets: 5068}, type: :ethernet}}
+```
 
 Events sent by `Nerves.NetworkInterface` include:
   * `ifadded` - an interface was hotplugged (e.g., a USB wifi dongle)
@@ -131,17 +123,21 @@ Events sent by `Nerves.NetworkInterface` include:
 
 To get the IP configuration for an interface, call `Nerves.NetworkInterface.settings/1`:
 
-    iex> Nerves.NetworkInterface.settings "eth0"
-    {:ok, %{ipv4_address: "192.168.25.114", ipv4_broadcast: "192.168.25.255",
-            ipv4_gateway: "192.168.25.5", ipv4_subnet_mask: "255.255.255.0",
-            mac_address: "e0:db:55:e7:8b:51"}
+```elixir
+iex> Nerves.NetworkInterface.settings "eth0"
+{:ok, %{ipv4_address: "192.168.25.114", ipv4_broadcast: "192.168.25.255",
+        ipv4_gateway: "192.168.25.5", ipv4_subnet_mask: "255.255.255.0",
+        mac_address: "e0:db:55:e7:8b:51"}
+```
 
 To setting IP addresses and other configuration, just call
 `Nerves.NetworkInterface.setup/2` using keyword parameters or a map with what you'd like
 to set. The following example uses keyward parameters:
 
-    iex> Nerves.NetworkInterface.setup "eth0", ipv4_address: "192.168.25.200", ipv4_subnet_mask: "255.255.255.0")
-    :ok
+```elixir
+iex> Nerves.NetworkInterface.setup "eth0", ipv4_address: "192.168.25.200", ipv4_subnet_mask: "255.255.255.0")
+:ok
+```
 
 If you get an error, check that you are running Elixir with sufficient privilege
 to modify network interfaces or make the `netif` binary setuid root.
@@ -152,8 +148,10 @@ however, only returns Elixir strings.
 To enable or disable an interface, you can do so with `Nerves.NetworkInterface.ifup/1` and
 `Nerves.NetworkInterface.ifdown/1`. As you would expect, these require privilege to run:
 
-    iex> Nerves.NetworkInterface.ifdown "eth0"
-    :ok
+```elixir
+iex> Nerves.NetworkInterface.ifdown "eth0"
+:ok
+```
 
 ## Testing
 To run tests you will need a linux machine with `ip`, `iproute2` and `sudo` access. See (#Permissions)[Permissions] for more info.

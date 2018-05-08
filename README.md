@@ -85,18 +85,43 @@ iex> Nerves.NetworkInterface.interfaces
 ["lo", "eth0", "wlan0"]
 ```
 
-To get link-level status information and statistics on an interface, call
-`Nerves.NetworkInterface.status/1`:
+To get link-level status information and statistics on an interface look inside
+SystemRegistry:
 
 ```elixir
-iex> Nerves.NetworkInterface.status "eth0"
-{:ok, %{ifname: "eth0", index: 2, is_broadcast: true, is_lower_up: true,
-        is_multicast: true, is_running: true, is_up: true,
-        mac_address: "e0:db:55:e7:8b:53",
-        mac_broadcast: "ff:ff:ff:ff:ff:ff", mtu: 1500, operstate: :up,
-        stats: %{collisions: 0, multicast: 7, rx_bytes: 2561254, rx_dropped: 0,
-          rx_errors: 0, rx_packets: 5301, tx_bytes: 944159, tx_dropped: 0,
-          tx_errors: 0, tx_packets: 3898}, type: :ethernet}
+iex> SystemRegistry.match(%{state: %{network_interface: :_}})
+%{
+  state: %{
+    network_interface: %{
+      "eth0" => %{
+        ifname: "eth0",
+        index: 4,
+        is_broadcast: true,
+        is_lower_up: false,
+        is_multicast: true,
+        is_running: false,
+        is_up: true,
+        mac_address: "1c:1b:0d:0f:91:8d",
+        mac_broadcast: "ff:ff:ff:ff:ff:ff",
+        mtu: 1500,
+        operstate: :down,
+        stats: %{
+          collisions: 0,
+          multicast: 0,
+          rx_bytes: 0,
+          rx_dropped: 0,
+          rx_errors: 0,
+          rx_packets: 0,
+          tx_bytes: 0,
+          tx_dropped: 0,
+          tx_errors: 0,
+          tx_packets: 0
+        },
+        type: :ethernet
+      }
+    }
+  }
+}
 ```
 
 Polling `Nerves.NetworkInterface` for status isn't that great, so it's possible to
@@ -176,13 +201,57 @@ iex> flush()
 }
 ```
 
-To get the IP configuration for an interface, call `Nerves.NetworkInterface.settings/1`:
+IP configuration is also stored in SystemRegistry.
 
 ```elixir
-iex> Nerves.NetworkInterface.settings "eth0"
-{:ok, %{ipv4_address: "192.168.25.114", ipv4_broadcast: "192.168.25.255",
-        ipv4_gateway: "192.168.25.5", ipv4_subnet_mask: "255.255.255.0",
-        mac_address: "e0:db:55:e7:8b:51"}
+%{
+  state: %{
+    network_interface: %{
+      "eth0" => %{
+        ifname: "eth0",
+        index: 4,
+        is_broadcast: true,
+        is_lower_up: false,
+        is_multicast: true,
+        is_running: false,
+        is_up: true,
+        mac_address: "1c:1b:0d:0f:91:8d",
+        mac_broadcast: "ff:ff:ff:ff:ff:ff",
+        mtu: 1500,
+        operstate: :down,
+        addresses: %{
+          "192.168.86.111" => %{
+            address: "192.168.86.111",
+            broadcast: "192.168.86.255",
+            family: :af_inet,
+            local: "192.168.86.111",
+            prefixlen: 24,
+            scope: 0
+          },
+          "fe80::8e19:f402:9be0:1437" => %{
+            address: "fe80::8e19:f402:9be0:1437",
+            family: :af_inet6,
+            prefixlen: 64,
+            scope: 253
+          }
+        },
+        stats: %{
+          collisions: 0,
+          multicast: 0,
+          rx_bytes: 0,
+          rx_dropped: 0,
+          rx_errors: 0,
+          rx_packets: 0,
+          tx_bytes: 0,
+          tx_dropped: 0,
+          tx_errors: 0,
+          tx_packets: 0
+        },
+        type: :ethernet
+      }
+    }
+  }
+}
 ```
 
 To setting IP addresses and other configuration, just call

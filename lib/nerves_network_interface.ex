@@ -104,7 +104,7 @@ defmodule Nerves.NetworkInterface do
   end
 
   def handle_call(:interfaces, _from, s) do
-    {:reply, s.interfaces, s}
+    {:reply, Enum.map(s.interfaces, &Map.fetch!(&1, :ifname)), s}
   end
 
   def handle_call(:refresh, _from, %__MODULE__{} = s) do

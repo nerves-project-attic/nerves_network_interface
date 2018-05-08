@@ -5,21 +5,28 @@ defmodule Nerves.NetworkInterface.Config do
   @scope [:config, :network_interface]
   @priority :nerves_network_interface
 
+  @type iface :: String.t
+  @type system_registry_response :: {:ok, {new :: map, old :: map}} | {:error, term}
+
+  @spec up(iface) :: system_registry_response
   def up(iface) do
     scope(iface)
     |> SR.update(%{is_up: true}, priority: @priority)
   end
 
+  @spec down(iface) :: system_registry_response
   def down(iface) do
     scope(iface)
     |> SR.update(%{is_up: false}, priority: @priority)
   end
 
+  @spec mac_address(ifname, mac_address :: String.t) :: system_registry_response
   def mac_address(iface, mac_address) do
     scope(iface)
     |> SR.update(%{mac_address: mac_address}, priority: @priority)
   end
 
+  @spec address_put(ifname, %{address: address :: String.t}) :: system_registry_response
   def address_put(iface, %{address: address} = addr) do
     address_delete(iface, address)
 
@@ -27,6 +34,7 @@ defmodule Nerves.NetworkInterface.Config do
     |> SR.update(addr, priority: @priority)
   end
 
+  @spec address_delete(ifname, address :: String.t) :: system_registry_response
   def address_delete(iface, address) when is_binary(address) do
     scope(iface, [:addresses, address])
     |> SR.delete(priority: @priority)

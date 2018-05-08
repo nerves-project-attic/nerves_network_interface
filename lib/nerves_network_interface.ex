@@ -43,14 +43,31 @@ defmodule Nerves.NetworkInterface do
             interfaces: [],
             config: %{}
 
+  @typedoc "Interface name"
+  @type ifname :: String.t()
+
+  @typedoc false
+  @type state :: %__MODULE__{
+    port: port,
+    requests: [any],
+    interfaces: [ifname],
+    config: map
+  }
+
+  @doc false
+  @spec start_link() :: GenServer.on_start()
   def start_link() do
     GenServer.start_link(__MODULE__, [], name: __MODULE__)
   end
 
+  @doc false
+  @spec stop :: :ok
   def stop() do
     GenServer.cast(__MODULE__, :stop)
   end
 
+  @doc "Get a list of all interfaces."
+  @spec interfaces() :: [ifname]
   def interfaces() do
     GenServer.call(__MODULE__, :interfaces)
   end
@@ -58,6 +75,7 @@ defmodule Nerves.NetworkInterface do
   @doc """
   Refresh the current state of all interfaces.
   """
+  @spec refresh() :: :ok
   def refresh() do
     GenServer.call(__MODULE__, :refresh)
   end
@@ -67,6 +85,7 @@ defmodule Nerves.NetworkInterface do
 
   Returns `:ok` on success or `{:error, reason}` if an error occurs.
   """
+  @spec send(any) :: :ok | {:error, any}
   def send(msg) do
     GenServer.call(__MODULE__, {:send, msg})
   end
@@ -88,12 +107,12 @@ defmodule Nerves.NetworkInterface do
     {:reply, s.interfaces, s}
   end
 
-  def handle_call(:refresh, _from, s) do
+  def handle_call(:refresh, _from, %__MODULE__{} = s) do
     response = call_port(s.port, :refresh, [])
     {:reply, response, s}
   end
 
-  def handle_call({:send, msg}, _from, s) do
+  def handle_call({:send, msg}, _from, %__MODULE__{} = s) do
     response = call_port(s.port, :send, msg)
     {:reply, response, s}
   end
@@ -102,7 +121,7 @@ defmodule Nerves.NetworkInterface do
     {:stop, :normal, state}
   end
 
-  def handle_info({:system_registry, :global, registry}, s) do
+  def handle_info({:system_registry, :global, registry}, %__MODULE__{} = s) do
     {config, msg} = Config.system_registry(registry, s.config, s.interfaces)
     send_msg(msg, s.port)
     {:noreply, %{s | config: config}}
@@ -121,7 +140,17 @@ defmodule Nerves.NetworkInterface do
   end
 
   # Private helper functions
-  defp call_port(port, command, arguments) do
+  @typedoc false
+  @type port_resp :: any | no_return
+
+  @typedoc "Command to be sent to the port."
+  @type command :: :ifup | :ifdown | :setup | :settings | :interfaces | :refresh | :send
+
+  @typedoc "Arguments for a command"
+  @type command_arguments :: Keyword.t
+  # Private helper functions
+  @spec call_port(port, command, command_arguments) :: port_resp
+  defp call_port(port, command, arguments) when is_port(port) do
     msg = {command, arguments}
     send(port, {self(), {:command, :erlang.term_to_binary(msg)}})
 

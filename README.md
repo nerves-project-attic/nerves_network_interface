@@ -28,7 +28,9 @@ network interfaces. `Nerves.Network` depends this project.
 This module requires [libmnl](http://netfilter.org/projects/libmnl/) to build.
 If you're running a Debian-based system, you can get it by running:
 
-    sudo apt-get install libmnl-dev
+```bash
+sudo apt-get install libmnl-dev
+```
 
 Nerves includes `libmnl` by default.
 
@@ -40,6 +42,7 @@ SUDO environment variable to `true`. I.e., `SUDO=true make`.
 
 ## Installation
 Add `nerves_network_interface` to your list of dependencies in `mix.exs`:
+
 ```elixir
 def deps do
   [{:nerves_network_interface, "~> 0.3.2"}]
@@ -69,7 +72,9 @@ SUDO environment variable to `true`. I.e., `SUDO=true make`.
 
 Start `iex`:
 
-    $ iex -S mix
+```bash
+$ iex -S mix
+```
 
 The `Nerves.NetworkInterface` application will start automatically.
 
@@ -171,15 +176,6 @@ iex> flush()
 }
 ```
 
-Events sent by `Nerves.NetworkInterface` include:
-  * `ifadded` - an interface was hotplugged (e.g., a USB wifi dongle)
-  * `ifrenamed` - an interface was renamed (e.g., `wlan0` is now
-    `wlxc83a35ca5f10`
-  * `ifchanged` - an interface changed status (e.g., it was down, but now it's
-    up)
-  * `ifremoved` - an interface was removed (e.g., the user removed a USB wifi
-    dongle)
-
 To get the IP configuration for an interface, call `Nerves.NetworkInterface.settings/1`:
 
 ```elixir
@@ -191,7 +187,7 @@ iex> Nerves.NetworkInterface.settings "eth0"
 
 To setting IP addresses and other configuration, just call
 `Nerves.NetworkInterface.setup/2` using keyword parameters or a map with what you'd like
-to set. The following example uses keyward parameters:
+to set. The following example uses keyword parameters:
 
 ```elixir
 iex> Nerves.NetworkInterface.setup "eth0", ipv4_address: "192.168.25.200", ipv4_subnet_mask: "255.255.255.0")

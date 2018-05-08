@@ -22,6 +22,7 @@ defmodule Nerves.NetworkInterface.Config do
 
   def address_put(iface, %{address: address} = addr) do
     address_delete(iface, address)
+
     scope(iface, [:addresses, address])
     |> SR.update(addr, priority: @priority)
   end
@@ -56,28 +57,30 @@ defmodule Nerves.NetworkInterface.Config do
   end
 
   def update(new, old, interfaces) do
-    Logger.debug "Config Changed"
-    {added, removed, modified} =
-      changes(new, old)
+    Logger.debug("Config Changed")
+    {added, removed, modified} = changes(new, old)
 
-    removed = Enum.map(removed, fn({k, _}) -> {k, %{}} end)
+    removed = Enum.map(removed, fn {k, _} -> {k, %{}} end)
     modified = added ++ modified ++ removed
 
-    ifaces =
-      Enum.map(interfaces, & &1.ifname)
+    ifaces = Enum.map(interfaces, & &1.ifname)
+
     modified =
-      Enum.filter(modified, fn({iface, _v}) ->
+      Enum.filter(modified, fn {iface, _v} ->
         iface in ifaces
       end)
+
     msg =
-      Enum.reduce(modified, [], fn({iface, _v} = new, msg) ->
+      Enum.reduce(modified, [], fn {iface, _v} = new, msg ->
         old = Map.get(old, iface, %{})
-        interface = Enum.find(interfaces, & &1.ifname == iface)
+        interface = Enum.find(interfaces, &(&1.ifname == iface))
+
         msg
         |> update_links(new, old)
         |> update_addresses(new, old, interface)
         |> update_routes(new, old, interface)
       end)
+
     {new, msg}
   end
 
@@ -88,7 +91,9 @@ defmodule Nerves.NetworkInterface.Config do
     cond do
       new != old ->
         [{:newlink, Map.put(new, :ifname, iface)} | msg]
-      true -> msg
+
+      true ->
+        msg
     end
   end
 
@@ -98,17 +103,20 @@ defmodule Nerves.NetworkInterface.Config do
 
     cond do
       new != old ->
-        {added, removed, modified} =
-          changes(new_addr, old_addr)
-      modified = added ++ modified
-      msg =
-        Enum.reduce(modified, msg, fn({_, v}, msg) ->
-          [{:newaddr, Map.put(v, :index, index)} | msg]
-        end)
-        Enum.reduce(removed, msg, fn({_, v}, msg) ->
+        {added, removed, modified} = changes(new_addr, old_addr)
+        modified = added ++ modified
+
+        msg =
+          Enum.reduce(modified, msg, fn {_, v}, msg ->
+            [{:newaddr, Map.put(v, :index, index)} | msg]
+          end)
+
+        Enum.reduce(removed, msg, fn {_, v}, msg ->
           [{:deladdr, Map.put(v, :index, index)} | msg]
         end)
-      true -> msg
+
+      true ->
+        msg
     end
   end
 
@@ -121,16 +129,15 @@ defmodule Nerves.NetworkInterface.Config do
   end
 
   defp changes(new, old) do
-    added =
-      Enum.filter(new, fn({k, _}) -> Map.get(old, k) == nil end)
-    removed =
-      Enum.filter(old, fn({k, _}) -> Map.get(new, k) == nil end)
+    added = Enum.filter(new, fn {k, _} -> Map.get(old, k) == nil end)
+    removed = Enum.filter(old, fn {k, _} -> Map.get(new, k) == nil end)
+
     modified =
-      Enum.filter(new, fn({k, v}) ->
+      Enum.filter(new, fn {k, v} ->
         val = Map.get(old, k)
         val != nil and val != v
       end)
+
     {added, removed, modified}
   end
-
 end

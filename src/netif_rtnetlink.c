@@ -119,13 +119,27 @@ static int encode_kv_operstate(struct netif *nb, const char *key, int operstate)
     const char *operstate_atom;
     switch (operstate) {
     default:
-    case IF_OPER_UNKNOWN:        operstate_atom = "unknown"; break;
-    case IF_OPER_NOTPRESENT:     operstate_atom = "notpresent"; break;
-    case IF_OPER_DOWN:           operstate_atom = "down"; break;
-    case IF_OPER_LOWERLAYERDOWN: operstate_atom = "lowerlayerdown"; break;
-    case IF_OPER_TESTING:        operstate_atom = "testing"; break;
-    case IF_OPER_DORMANT:        operstate_atom = "dormant"; break;
-    case IF_OPER_UP:             operstate_atom = "up"; break;
+    case IF_OPER_UNKNOWN:
+        operstate_atom = "unknown";
+        break;
+    case IF_OPER_NOTPRESENT:
+        operstate_atom = "notpresent";
+        break;
+    case IF_OPER_DOWN:
+        operstate_atom = "down";
+        break;
+    case IF_OPER_LOWERLAYERDOWN:
+        operstate_atom = "lowerlayerdown";
+        break;
+    case IF_OPER_TESTING:
+        operstate_atom = "testing";
+        break;
+    case IF_OPER_DORMANT:
+        operstate_atom = "dormant";
+        break;
+    case IF_OPER_UP:
+        operstate_atom = "up";
+        break;
     }
     ei_encode_atom(nb->resp, &nb->resp_index, operstate_atom);
 
@@ -216,7 +230,7 @@ void nlattr_decode_macaddr(const struct nlattr_encoder_info *info, struct netif 
     unsigned char mac[6];
 
     if (erlcmd_decode_string(nb->req, &nb->req_index, temp, sizeof(temp)) < 0 ||
-           string_to_macaddr(temp, mac) < 0)
+            string_to_macaddr(temp, mac) < 0)
         errx(EXIT_FAILURE, "Expecting macaddr string for %s", info->name);
 
     mnl_attr_put(nlh, info->type, sizeof(mac), mac);
@@ -336,8 +350,8 @@ const struct nlattr_encoder_info *nlattr_find_by_type(const struct nlattr_encode
 {
     const struct nlattr_encoder_info *info;
     for (info = table;
-         info->name != NULL;
-         info++) {
+            info->name != NULL;
+            info++) {
         if (info->type == type)
             return info;
     }
@@ -347,8 +361,8 @@ const struct nlattr_encoder_info *nlattr_find_by_name(const struct nlattr_encode
 {
     const struct nlattr_encoder_info *info;
     for (info = table;
-         info->name != NULL;
-         info++) {
+            info->name != NULL;
+            info++) {
         if (strcmp(info->name, str) == 0)
             return info;
     }
@@ -405,7 +419,7 @@ static int encode_rtm_link_attrs(const struct nlattr *attr, void *data)
 
     // Handle known attributes
     const struct nlattr_encoder_info *info =
-            nlattr_find_by_type(ifla_encoders, type);
+        nlattr_find_by_type(ifla_encoders, type);
     if (mnl_attr_type_valid(attr, IFLA_MAX) >= 0 && info->encoder) {
         encode_state_incr(state);
         rc = info->encoder(state, info->name, attr);
@@ -416,7 +430,7 @@ static int encode_rtm_link_attrs(const struct nlattr *attr, void *data)
 static void decode_rtm_link_attrs(struct netif *nb, const char *name, struct nlmsghdr *nlh)
 {
     const struct nlattr_encoder_info *info =
-            nlattr_find_by_name(ifla_encoders, name);
+        nlattr_find_by_name(ifla_encoders, name);
     if (info->decoder) {
         info->decoder(info, nb, nlh);
     } else {
@@ -432,7 +446,7 @@ static int encode_rtm_addr_attrs(const struct nlattr *attr, void *data)
 
     // Handle known attributes
     const struct nlattr_encoder_info *info =
-            nlattr_find_by_type(ifa_encoders, type);
+        nlattr_find_by_type(ifa_encoders, type);
     if (mnl_attr_type_valid(attr, IFA_MAX) >= 0 && info->encoder) {
         encode_state_incr(state);
         rc = info->encoder(state, info->name, attr);
@@ -443,7 +457,7 @@ static int encode_rtm_addr_attrs(const struct nlattr *attr, void *data)
 static void decode_rtm_addr_attrs(struct netif *nb, const char *name, struct nlmsghdr *nlh)
 {
     const struct nlattr_encoder_info *info =
-            nlattr_find_by_name(ifa_encoders, name);
+        nlattr_find_by_name(ifa_encoders, name);
     if (info->decoder) {
         info->decoder(info, nb, nlh);
     } else {
@@ -459,7 +473,7 @@ static int encode_rtm_route_attrs(const struct nlattr *attr, void *data)
 
     // Handle known attributes
     const struct nlattr_encoder_info *info =
-            nlattr_find_by_type(rta_encoders, type);
+        nlattr_find_by_type(rta_encoders, type);
     if (mnl_attr_type_valid(attr, RTA_MAX) >= 0 && info->encoder) {
         encode_state_incr(state);
         rc = info->encoder(state, info->name, attr);
@@ -470,7 +484,7 @@ static int encode_rtm_route_attrs(const struct nlattr *attr, void *data)
 static void decode_rtm_route_attrs(struct netif *nb, const char *name, struct nlmsghdr *nlh)
 {
     const struct nlattr_encoder_info *info =
-            nlattr_find_by_name(rta_encoders, name);
+        nlattr_find_by_name(rta_encoders, name);
     if (info->decoder) {
         info->decoder(info, nb, nlh);
     } else {
@@ -692,10 +706,10 @@ static int netif_encode_rtnetlink(const struct nlmsghdr *nlh, void *data)
     {
         const struct ifaddrmsg *ifa = mnl_nlmsg_get_payload(nlh);
         debug("RTM_NEWADDR/DELADDR: family=%s, index=%d, scope=%d, prefixlen=%d\n",
-                ifa_family_to_string(ifa->ifa_family),
-                ifa->ifa_index,
-                ifa->ifa_scope,
-                ifa->ifa_prefixlen);
+              ifa_family_to_string(ifa->ifa_family),
+              ifa->ifa_index,
+              ifa->ifa_scope,
+              ifa->ifa_prefixlen);
 
         encode_kv_long(nb, "index", ifa->ifa_index);
         encode_kv_atom(nb, "family", ifa_family_to_string(ifa->ifa_family));

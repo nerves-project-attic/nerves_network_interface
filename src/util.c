@@ -125,16 +125,16 @@ void fprintf_nested(FILE *fd, const struct nlattr *attr)
 
         if (rem == 0 && (subattr->nla_type & NLA_TYPE_MASK) != 0) {
             fprintf(fd, "|%c[%d;%dm"
-                        "%.5u"
-                        "%c[%dm"
-                        "|"
-                        "%c[%d;%dm"
-                        "%c%c"
-                        "%c[%dm"
-                        "|"
-                        "%c[%d;%dm"
-                        "%.5u"
-                        "%c[%dm|\t",
+                    "%.5u"
+                    "%c[%dm"
+                    "|"
+                    "%c[%d;%dm"
+                    "%c%c"
+                    "%c[%dm"
+                    "|"
+                    "%c[%d;%dm"
+                    "%.5u"
+                    "%c[%dm|\t",
                     27, 1, 31,
                     subattr->nla_len,
                     27, 0,
@@ -150,7 +150,7 @@ void fprintf_nested(FILE *fd, const struct nlattr *attr)
 
             if (!(subattr->nla_type & NLA_F_NESTED)) {
                 rem = NLA_ALIGN(subattr->nla_len) -
-                        sizeof(struct nlattr);
+                      sizeof(struct nlattr);
             }
             /* this is the attribute payload. */
         } else if (rem > 0) {
@@ -162,8 +162,8 @@ void fprintf_nested(FILE *fd, const struct nlattr *attr)
             fprintf(fd, "\t %c %c %c %c\n",
                     isprint(b[i]) ? b[i] : ' ',
                     isprint(b[i+1]) ? b[i+1] : ' ',
-                isprint(b[i+2]) ? b[i+2] : ' ',
-                isprint(b[i+3]) ? b[i+3] : ' ');
+                    isprint(b[i+2]) ? b[i+2] : ' ',
+                    isprint(b[i+3]) ? b[i+3] : ' ');
         }
     }
     fprintf(fd, "----------------\t------------------\n");

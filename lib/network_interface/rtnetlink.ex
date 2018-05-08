@@ -1,21 +1,19 @@
 defmodule Nerves.NetworkInterface.Rtnetlink do
-
   alias SystemRegistry, as: SR
   alias SystemRegistry.Transaction, as: T
 
   def decode(messages, ifaces) when is_list(messages) do
-    Enum.reduce(messages, {:ok, T.begin, ifaces}, fn
-      (msg, {error, t, ifaces}) ->
-        case decode(t, msg, ifaces) do
-          {:ok, t, ifaces} -> {error, t, ifaces}
-          {:noop, t, ifaces} -> {error, t, ifaces}
-          {:error, _, ifaces} -> {:error, t, ifaces}
-        end
+    Enum.reduce(messages, {:ok, T.begin(), ifaces}, fn msg, {error, t, ifaces} ->
+      case decode(t, msg, ifaces) do
+        {:ok, t, ifaces} -> {error, t, ifaces}
+        {:noop, t, ifaces} -> {error, t, ifaces}
+        {:error, _, ifaces} -> {:error, t, ifaces}
+      end
     end)
   end
 
   def decode(msg, ifaces) do
-    decode(T.begin, msg, ifaces)
+    decode(T.begin(), msg, ifaces)
   end
 
   @doc """
@@ -27,6 +25,7 @@ defmodule Nerves.NetworkInterface.Rtnetlink do
         {[iface], ifaces} -> {iface, ifaces}
         {_, ifaces} -> {msg, ifaces}
       end
+
     new(t, msg, iface, ifaces)
   end
 
@@ -52,9 +51,12 @@ defmodule Nerves.NetworkInterface.Rtnetlink do
           |> Map.put(addr_key, address)
 
         iface = Map.put(iface, :addresses, addresses)
-        t = SR.update(t, [:state, :network_interface, iface.ifname, :addresses, addr_key], address)
+
+        t =
+          SR.update(t, [:state, :network_interface, iface.ifname, :addresses, addr_key], address)
 
         {:ok, t, [iface | ifaces]}
+
       _ ->
         {:error, "unknown interface at index: #{msg.index}", ifaces}
     end
@@ -77,6 +79,7 @@ defmodule Nerves.NetworkInterface.Rtnetlink do
         t = SR.delete(t, [:state, :network_interface, iface.ifname, :addresses, addr_key])
 
         {:ok, t, [iface | ifaces]}
+
       _ ->
         {:error, "unknown interface at index: #{msg.index}", ifaces}
     end
@@ -92,16 +95,21 @@ defmodule Nerves.NetworkInterface.Rtnetlink do
         route = prune_route(msg)
         routes = [route | routes]
         gateway = Map.get(route, :gateway)
+
         iface =
           iface
           |> Map.put(:routes, routes)
           |> Map.put(:gateway, gateway)
+
         t =
           t
           |> SR.update([:state, :network_interface, iface.ifname, :routes], routes)
           |> SR.update([:state, :network_interface, iface.ifname, :gateway], gateway)
+
         {:ok, t, [iface | ifaces]}
-      _ -> {:error, "unknown interface at index: #{msg.oif}", ifaces}
+
+      _ ->
+        {:error, "unknown interface at index: #{msg.oif}", ifaces}
     end
   end
 
@@ -109,23 +117,23 @@ defmodule Nerves.NetworkInterface.Rtnetlink do
 
   # Interface was moved
   defp new(t, %{ifname: new_name, index: index} = new, %{ifname: old_name, index: index}, ifaces)
-    when old_name != new_name do
+       when old_name != new_name do
     t
     |> SR.move([:state, :network_interface, old_name], [:state, :network_interface, new_name])
     |> new(new, %{}, ifaces)
   end
 
   defp new(t, new, _old, ifaces) do
-    t = t
-    |> SR.update([:state, :network_interface, new.ifname], new)
+    t =
+      t
+      |> SR.update([:state, :network_interface, new.ifname], new)
+
     {:ok, t, [new | ifaces]}
   end
 
-  defp iface(ifaces, ifindex),
-    do: Enum.split_with(ifaces, & &1.index == ifindex)
+  defp iface(ifaces, ifindex), do: Enum.split_with(ifaces, &(&1.index == ifindex))
 
-  defp route(routes, route),
-    do: Enum.split_with(routes, & &1 == route)
+  defp route(routes, route), do: Enum.split_with(routes, &(&1 == route))
 
   defp prune_address(address) do
     address

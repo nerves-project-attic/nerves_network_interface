@@ -38,7 +38,6 @@ defmodule Nerves.NetworkInterface do
   alias SystemRegistry, as: SR
   alias Nerves.NetworkInterface.{Rtnetlink, Config}
 
-
   defstruct port: nil,
             requests: [],
             interfaces: [],
@@ -73,17 +72,16 @@ defmodule Nerves.NetworkInterface do
   end
 
   def init([]) do
-    Logger.info "Start Network Interface Worker"
+    Logger.info("Start Network Interface Worker")
 
     executable = :code.priv_dir(:nerves_network_interface) ++ '/netif'
-    port = Port.open({:spawn_executable, executable},
-    [{:packet, 2}, :use_stdio, :binary])
+    port = Port.open({:spawn_executable, executable}, [{:packet, 2}, :use_stdio, :binary])
     s = %Nerves.NetworkInterface{port: port}
 
     call_port(s.port, :refresh, [])
 
     SR.register()
-    {:ok,  s}
+    {:ok, s}
   end
 
   def handle_call(:interfaces, _from, s) do
@@ -94,6 +92,7 @@ defmodule Nerves.NetworkInterface do
     response = call_port(s.port, :refresh, [])
     {:reply, response, s}
   end
+
   def handle_call({:send, msg}, _from, s) do
     response = call_port(s.port, :send, msg)
     {:reply, response, s}
@@ -111,7 +110,7 @@ defmodule Nerves.NetworkInterface do
 
   def handle_info({_, {:data, <<?n, message::binary>>}}, state) do
     msg = :erlang.binary_to_term(message)
-    Logger.info "nerves_network_interface received #{inspect msg}"
+    Logger.info("nerves_network_interface received #{inspect(msg)}")
     {:ok, t, interfaces} = Rtnetlink.decode(msg, state.interfaces)
     SR.commit(t)
     {:noreply, %{state | interfaces: interfaces}}
@@ -124,7 +123,8 @@ defmodule Nerves.NetworkInterface do
   # Private helper functions
   defp call_port(port, command, arguments) do
     msg = {command, arguments}
-    send port, {self(), {:command, :erlang.term_to_binary(msg)}}
+    send(port, {self(), {:command, :erlang.term_to_binary(msg)}})
+
     receive do
       {_, {:data, <<?r, response::binary>>}} ->
         :erlang.binary_to_term(response)
@@ -136,6 +136,7 @@ defmodule Nerves.NetworkInterface do
   end
 
   defp send_msg([], _port), do: :noop
+
   defp send_msg(msg, port) do
     call_port(port, :send, msg)
   end

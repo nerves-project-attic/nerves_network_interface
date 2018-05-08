@@ -85,10 +85,10 @@ static size_t erlcmd_try_dispatch(struct erlcmd *handler)
         return 0;
 
 #if 1
-fprintf(stderr, "Got %d length request\n", (int)msglen);
-for (size_t i = 0; i < msglen + sizeof(uint16_t); i++)
-    fprintf(stderr, "%d, ", handler->buffer[i]);
-fprintf(stderr, "\n");
+    fprintf(stderr, "Got %d length request\n", (int)msglen);
+    for (size_t i = 0; i < msglen + sizeof(uint16_t); i++)
+        fprintf(stderr, "%d, ", handler->buffer[i]);
+    fprintf(stderr, "\n");
 #endif
 
     handler->request_handler(handler->buffer, handler->cookie);
@@ -206,8 +206,8 @@ int erlcmd_encode_ok(char *buf, int *index)
 int erlcmd_encode_error_tuple(char *buf, int *index, const char *error_atom)
 {
     if (ei_encode_tuple_header(buf, index, 2) == 0 &&
-        ei_encode_atom(buf, index, "error") == 0 &&
-        ei_encode_atom(buf, index, error_atom) == 0)
+            ei_encode_atom(buf, index, "error") == 0 &&
+            ei_encode_atom(buf, index, error_atom) == 0)
         return 0;
     else
         return -1;
@@ -224,41 +224,111 @@ int erlcmd_encode_errno_error(char *buf, int *index, int err)
 {
     const char *reason;
     switch (err) {
-    case 0:       reason = "ok"; break;
-    case EPERM:   reason = "eperm"; break;
-    case ENOENT:  reason = "enoent"; break;
-    case ESRCH:   reason = "esrch"; break;
-    case EINTR:   reason = "eintr"; break;
-    case EIO:     reason = "eio"; break;
-    case ENXIO:   reason = "enxio"; break;
-    case E2BIG:   reason = "e2big"; break;
-    case ENOEXEC: reason = "enoexec"; break;
-    case EBADF:   reason = "ebadf"; break;
-    case ECHILD:  reason = "echild"; break;
-    case EAGAIN:  reason = "eagain"; break;
-    case ENOMEM:  reason = "enomem"; break;
-    case EACCES:  reason = "eacces"; break;
-    case EFAULT:  reason = "efault"; break;
-    case ENOTBLK: reason = "enotblk"; break;
-    case EBUSY:   reason = "ebusy"; break;
-    case EEXIST:  reason = "eexist"; break;
-    case EXDEV:   reason = "exdev"; break;
-    case ENODEV:  reason = "enodev"; break;
-    case ENOTDIR: reason = "enotdir"; break;
-    case EISDIR:  reason = "eisdir"; break;
-    case EINVAL:  reason = "einval"; break;
-    case ENFILE:  reason = "enfile"; break;
-    case EMFILE:  reason = "emfile"; break;
-    case ENOTTY:  reason = "enotty"; break;
-    case ETXTBSY: reason = "etxtbsy"; break;
-    case EFBIG:   reason = "efbig"; break;
-    case ENOSPC:  reason = "enospc"; break;
-    case ESPIPE:  reason = "espipe"; break;
-    case EROFS:   reason = "erofs"; break;
-    case EMLINK:  reason = "emlink"; break;
-    case EPIPE:   reason = "epipe"; break;
-    case EADDRNOTAVAIL: reason = "eaddrnotavail"; break;
-    default:      reason = "unknown"; break;
+    case 0:
+        reason = "ok";
+        break;
+    case EPERM:
+        reason = "eperm";
+        break;
+    case ENOENT:
+        reason = "enoent";
+        break;
+    case ESRCH:
+        reason = "esrch";
+        break;
+    case EINTR:
+        reason = "eintr";
+        break;
+    case EIO:
+        reason = "eio";
+        break;
+    case ENXIO:
+        reason = "enxio";
+        break;
+    case E2BIG:
+        reason = "e2big";
+        break;
+    case ENOEXEC:
+        reason = "enoexec";
+        break;
+    case EBADF:
+        reason = "ebadf";
+        break;
+    case ECHILD:
+        reason = "echild";
+        break;
+    case EAGAIN:
+        reason = "eagain";
+        break;
+    case ENOMEM:
+        reason = "enomem";
+        break;
+    case EACCES:
+        reason = "eacces";
+        break;
+    case EFAULT:
+        reason = "efault";
+        break;
+    case ENOTBLK:
+        reason = "enotblk";
+        break;
+    case EBUSY:
+        reason = "ebusy";
+        break;
+    case EEXIST:
+        reason = "eexist";
+        break;
+    case EXDEV:
+        reason = "exdev";
+        break;
+    case ENODEV:
+        reason = "enodev";
+        break;
+    case ENOTDIR:
+        reason = "enotdir";
+        break;
+    case EISDIR:
+        reason = "eisdir";
+        break;
+    case EINVAL:
+        reason = "einval";
+        break;
+    case ENFILE:
+        reason = "enfile";
+        break;
+    case EMFILE:
+        reason = "emfile";
+        break;
+    case ENOTTY:
+        reason = "enotty";
+        break;
+    case ETXTBSY:
+        reason = "etxtbsy";
+        break;
+    case EFBIG:
+        reason = "efbig";
+        break;
+    case ENOSPC:
+        reason = "enospc";
+        break;
+    case ESPIPE:
+        reason = "espipe";
+        break;
+    case EROFS:
+        reason = "erofs";
+        break;
+    case EMLINK:
+        reason = "emlink";
+        break;
+    case EPIPE:
+        reason = "epipe";
+        break;
+    case EADDRNOTAVAIL:
+        reason = "eaddrnotavail";
+        break;
+    default:
+        reason = "unknown";
+        break;
     }
     return erlcmd_encode_error_tuple(buf, index, reason);
 }

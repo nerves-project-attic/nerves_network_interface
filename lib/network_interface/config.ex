@@ -5,49 +5,49 @@ defmodule Nerves.NetworkInterface.Config do
   @scope [:config, :network_interface]
   @priority :nerves_network_interface
 
-  @type iface :: String.t
+  @type ifname :: String.t()
   @type system_registry_response :: {:ok, {new :: map, old :: map}} | {:error, term}
 
-  @spec up(iface) :: system_registry_response
-  def up(iface) do
-    scope(iface)
+  @spec up(ifname) :: system_registry_response
+  def up(ifname) do
+    scope(ifname)
     |> SR.update(%{is_up: true}, priority: @priority)
   end
 
-  @spec down(iface) :: system_registry_response
-  def down(iface) do
-    scope(iface)
+  @spec down(ifname) :: system_registry_response
+  def down(ifname) do
+    scope(ifname)
     |> SR.update(%{is_up: false}, priority: @priority)
   end
 
-  @spec mac_address(ifname, mac_address :: String.t) :: system_registry_response
-  def mac_address(iface, mac_address) do
-    scope(iface)
+  @spec mac_address(ifname, mac_address :: String.t()) :: system_registry_response
+  def mac_address(ifname, mac_address) do
+    scope(ifname)
     |> SR.update(%{mac_address: mac_address}, priority: @priority)
   end
 
-  @spec address_put(ifname, %{address: address :: String.t}) :: system_registry_response
-  def address_put(iface, %{address: address} = addr) do
-    address_delete(iface, address)
+  @spec address_put(ifname, %{address: address :: String.t()}) :: system_registry_response
+  def address_put(ifname, %{address: address} = addr) do
+    address_delete(ifname, address)
 
-    scope(iface, [:addresses, address])
+    scope(ifname, [:addresses, address])
     |> SR.update(addr, priority: @priority)
   end
 
-  @spec address_delete(ifname, address :: String.t) :: system_registry_response
-  def address_delete(iface, address) when is_binary(address) do
-    scope(iface, [:addresses, address])
+  @spec address_delete(ifname, address :: String.t()) :: system_registry_response
+  def address_delete(ifname, address) when is_binary(address) do
+    scope(ifname, [:addresses, address])
     |> SR.delete(priority: @priority)
   end
 
-  # def route_put(iface, address) do
-  #   address_delete(iface, address)
-  #   scope(iface, [:routes])
+  # def route_put(ifname, address) do
+  #   address_delete(ifname, address)
+  #   scope(ifname, [:routes])
   #   |> SR.update(addr, priority: @priority)
   # end
   #
-  # def route_delete(iface, route) do
-  #   scope(iface, [:routes, route])
+  # def route_delete(ifname, route) do
+  #   scope(ifname, [:routes, route])
   #   |> SR.delete
   # end
 
@@ -71,17 +71,17 @@ defmodule Nerves.NetworkInterface.Config do
     removed = Enum.map(removed, fn {k, _} -> {k, %{}} end)
     modified = added ++ modified ++ removed
 
-    ifaces = Enum.map(interfaces, & &1.ifname)
+    ifnames = Enum.map(interfaces, & &1.ifname)
 
     modified =
-      Enum.filter(modified, fn {iface, _v} ->
-        iface in ifaces
+      Enum.filter(modified, fn {ifname, _v} ->
+        ifname in ifnames
       end)
 
     msg =
-      Enum.reduce(modified, [], fn {iface, _v} = new, msg ->
-        old = Map.get(old, iface, %{})
-        interface = Enum.find(interfaces, &(&1.ifname == iface))
+      Enum.reduce(modified, [], fn {ifname, _v} = new, msg ->
+        old = Map.get(old, ifname, %{})
+        interface = Enum.find(interfaces, &(&1.ifname == ifname))
 
         msg
         |> update_links(new, old)
@@ -92,20 +92,20 @@ defmodule Nerves.NetworkInterface.Config do
     {new, msg}
   end
 
-  def update_links(msg, {iface, new}, old) do
+  def update_links(msg, {ifname, new}, old) do
     new = Map.drop(new, [:addresses, :routes])
     old = Map.drop(old, [:addresses, :routes])
 
     cond do
       new != old ->
-        [{:newlink, Map.put(new, :ifname, iface)} | msg]
+        [{:newlink, Map.put(new, :ifname, ifname)} | msg]
 
       true ->
         msg
     end
   end
 
-  defp update_addresses(msg, {_iface, new}, old, %{index: index}) do
+  defp update_addresses(msg, {_ifname, new}, old, %{index: index}) do
     new_addr = Map.get(new, :addresses, %{})
     old_addr = Map.get(old, :addresses, %{})
 
@@ -128,12 +128,12 @@ defmodule Nerves.NetworkInterface.Config do
     end
   end
 
-  def update_routes(msg, {_iface, _new}, _old, _interface) do
+  def update_routes(msg, {_ifname, _new}, _old, _interface) do
     msg
   end
 
-  defp scope(iface, append \\ []) do
-    @scope ++ [iface | append]
+  defp scope(ifname, append \\ []) do
+    @scope ++ [ifname | append]
   end
 
   defp changes(new, old) do

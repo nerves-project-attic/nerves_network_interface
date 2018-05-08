@@ -48,11 +48,11 @@ defmodule Nerves.NetworkInterface do
 
   @typedoc false
   @type state :: %__MODULE__{
-    port: port,
-    requests: [any],
-    interfaces: [ifname],
-    config: map
-  }
+          port: port,
+          requests: [any],
+          interfaces: [ifname],
+          config: map
+        }
 
   @doc false
   @spec start_link() :: GenServer.on_start()
@@ -147,7 +147,7 @@ defmodule Nerves.NetworkInterface do
   @type command :: :ifup | :ifdown | :setup | :settings | :interfaces | :refresh | :send
 
   @typedoc "Arguments for a command"
-  @type command_arguments :: Keyword.t
+  @type command_arguments :: Keyword.t()
   # Private helper functions
   @spec call_port(port, command, command_arguments) :: port_resp
   defp call_port(port, command, arguments) when is_port(port) do

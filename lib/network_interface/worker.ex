@@ -156,7 +156,6 @@ defmodule Nerves.NetworkInterface.Worker do
       get_managed_interfaces(available_interfaces)
         |> intersect(available_interfaces)
     Logger.debug "#{__MODULE__}: response: #{inspect response}"
-    IO.puts "#{__MODULE__}: response: #{inspect response}"
     {:reply, response, state }
   end
   def handle_call({:status, ifname}, _from, state) do

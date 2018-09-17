@@ -250,8 +250,21 @@ int erlcmd_encode_errno_error(char *buf, int *index, int err)
     case EROFS:   reason = "erofs"; break;
     case EMLINK:  reason = "emlink"; break;
     case EPIPE:   reason = "epipe"; break;
+    case ENETDOWN:      reason = "enetdown"; break;
+    case ENETUNREACH:   reason = "enetunreach"; break;
+    case ENETRESET:     reason = "enetreset"; break;
+    case ECONNABORTED:  reason = "econnaborted"; break;
+    case ECONNRESET:    reason = "econnreset"; break;
     case EADDRNOTAVAIL: reason = "eaddrnotavail"; break;
-    default:      reason = "unknown"; break;
+    case ENOBUFS:       reason = "enobufs"; break;
+    case EISCONN:       reason = "eisconn"; break;
+    case ENOTCONN:      reason = "enotconn"; break;
+    case ETOOMANYREFS:  reason = "etoomanyrefs"; break;
+    case ETIMEDOUT:     reason = "etimedout"; break;
+    case ECONNREFUSED:  reason = "econnrefused"; break;
+    case EHOSTDOWN:     reason = "ehostdown"; break;
+    case EHOSTUNREACH:  reason = "ehostunreach"; break;
+    default: reason = "unknown"; break;
     }
     return erlcmd_encode_error_tuple(buf, index, reason);
 }

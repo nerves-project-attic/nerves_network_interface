@@ -8,11 +8,10 @@ defmodule Nerves.NetworkInterface.Application do
 
     children = [
       supervisor(Registry, [:duplicate, Nerves.NetworkInterface]),
-      worker(Nerves.NetworkInterface.Worker, []),
+      worker(Nerves.NetworkInterface.Worker, [])
     ]
 
     opts = [strategy: :rest_for_one, name: Nerves.NervesInterface.Supervisor]
     Supervisor.start_link(children, opts)
   end
-
 end

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 defmodule Nerves.NetworkInterface do
-
   @moduledoc """
   This module exposes a simplified view of Linux network configuration to
   applications.

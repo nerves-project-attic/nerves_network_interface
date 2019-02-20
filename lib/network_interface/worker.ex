@@ -183,16 +183,7 @@ defmodule Nerves.NetworkInterface.Worker do
     {:stop, :unexpected_exit, state}
   end
 
-  @typedoc false
-  @type port_resp :: any | no_return
-
-  @typedoc "Command to be sent to the port."
-  @type command :: :ifup | :ifdown | :setup | :settings | :interfaces
-
-  @typedoc "Arguments for a command"
-  @type command_arguments :: {ifname, options} | ifname
   # Private helper functions
-  @spec call_port(t, command, command_arguments) :: port_resp
   defp call_port(state, command, arguments) do
     msg = {command, arguments}
     send(state.port, {self(), {:command, :erlang.term_to_binary(msg)}})

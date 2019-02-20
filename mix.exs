@@ -2,18 +2,18 @@ defmodule Nerves.NetworkInterface.Mixfile do
   use Mix.Project
 
   def project do
-    [app: :nerves_network_interface,
-     version: "0.4.4",
-     elixir: "~> 1.4",
-     build_embedded: Mix.env == :prod,
-     start_permanent: Mix.env == :prod,
-     compilers: [:elixir_make] ++ Mix.compilers,
-     make_clean: ["clean"],
-     deps: deps(),
-     docs: [extras: ["README.md"],
-            main: "readme"],
-     package: package(),
-     description: description()
+    [
+      app: :nerves_network_interface,
+      version: "0.4.4",
+      elixir: "~> 1.4",
+      build_embedded: Mix.env() == :prod,
+      start_permanent: Mix.env() == :prod,
+      compilers: [:elixir_make] ++ Mix.compilers(),
+      make_clean: ["clean"],
+      deps: deps(),
+      docs: [extras: ["README.md"], main: "readme"],
+      package: package(),
+      description: description()
     ]
   end
 
@@ -21,8 +21,7 @@ defmodule Nerves.NetworkInterface.Mixfile do
   #
   # Type `mix help compile.app` for more information
   def application do
-    [extra_applications: [:logger],
-     mod: {Nerves.NetworkInterface.Application, []}]
+    [extra_applications: [:logger], mod: {Nerves.NetworkInterface.Application, []}]
   end
 
   defp description do
@@ -32,15 +31,29 @@ defmodule Nerves.NetworkInterface.Mixfile do
   end
 
   defp package do
-    %{files: ["lib", "src/*.[ch]", "src/test-c99.sh", "test", "mix.exs", "README.md", "LICENSE", "CHANGELOG.md", "Makefile"],
+    %{
+      files: [
+        "lib",
+        "src/*.[ch]",
+        "src/test-c99.sh",
+        "test",
+        "mix.exs",
+        "README.md",
+        "LICENSE",
+        "CHANGELOG.md",
+        "Makefile"
+      ],
       maintainers: ["Frank Hunleth"],
       licenses: ["Apache-2.0"],
-      links: %{"GitHub" => "https://github.com/nerves-project/nerves_network_interface"}}
+      links: %{"GitHub" => "https://github.com/nerves-project/nerves_network_interface"}
+    }
   end
 
   defp deps do
-    [{:dialyxir,    ">= 0.5.1", only: [:dev, :test], runtime: false},
-     {:elixir_make, "~> 0.4", runtime: false},
-     {:ex_doc, "~> 0.18.0", only: [:dev, :test], runtime: false}]
+    [
+      {:dialyxir, ">= 0.5.1", only: [:dev, :test], runtime: false},
+      {:elixir_make, "~> 0.4", runtime: false},
+      {:ex_doc, "~> 0.19", only: [:dev, :test], runtime: false}
+    ]
   end
 end

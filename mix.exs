@@ -6,9 +6,10 @@ defmodule Nerves.NetworkInterface.Mixfile do
       app: :nerves_network_interface,
       version: "0.4.5",
       elixir: "~> 1.4",
-      build_embedded: Mix.env() == :prod,
+      build_embedded: true,
       start_permanent: Mix.env() == :prod,
       compilers: [:elixir_make] ++ Mix.compilers(),
+      make_targets: ["all"],
       make_clean: ["clean"],
       deps: deps(),
       docs: [extras: ["README.md"], main: "readme"],
@@ -52,7 +53,7 @@ defmodule Nerves.NetworkInterface.Mixfile do
   defp deps do
     [
       {:dialyxir, ">= 0.5.1", only: [:dev, :test], runtime: false},
-      {:elixir_make, "~> 0.4", runtime: false},
+      {:elixir_make, "~> 0.5", runtime: false},
       {:ex_doc, "~> 0.19", only: [:dev, :test], runtime: false}
     ]
   end

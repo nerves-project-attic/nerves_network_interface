@@ -4,7 +4,7 @@ defmodule Nerves.NetworkInterface.Mixfile do
   def project do
     [
       app: :nerves_network_interface,
-      version: "0.4.5",
+      version: "0.4.6",
       elixir: "~> 1.4",
       build_embedded: true,
       start_permanent: Mix.env() == :prod,

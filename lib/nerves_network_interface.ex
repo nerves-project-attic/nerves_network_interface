@@ -35,9 +35,51 @@ defmodule Nerves.NetworkInterface do
   """
 
   @type interface_name :: String.t
-  @type registration :: 
+  @type registration ::
     {:ok, pid} |
     {:error, {:already_registered, pid}}
+
+  @type operstate ::
+      :unknown
+    | :notpresent
+    | :down
+    | :lowerlayerdown
+    | :testing
+    | :dormant
+    | :up
+
+  @type ipv4_address :: String.t()
+
+  @type ifsettings_ipv4 :: %{
+    ifname: Nerves.NetworkInterface.interface_name(),
+    domain: String.t(),
+    ipv4_address: ipv4_address(),
+    ipv4_broadcast: ipv4_address(),
+    ipv4_gateway: ipv4_address(),
+    ipv4_subnet_mask: ipv4_address(),
+    nameservers: list(ipv4_address())
+  }
+
+  @type ifstatus :: %{
+    ifname: Nerves.NetworkInterface.interface_name(),
+    index: integer(),
+    "is_all-multicast": boolean(),
+    is_broadcast: boolean(),
+    is_lower_up: boolean(),
+    is_multicast: boolean(),
+    is_running: boolean(),
+    is_up: boolean(),
+    mac_address: String.t(),
+    mac_broadcast: String.t(),
+    mtu: integer(),
+    operstate: operstate(),
+    type: :ethernet | :other
+  }
+
+  @type ifevent ::
+     ifstatus()
+   | ifsettings_ipv4()
+
 
   @doc """
   Return the list of network interfaces on this machine.
@@ -123,6 +165,7 @@ defmodule Nerves.NetworkInterface do
   end
 
   def register(ifname) do
+    Logger.debug("Registering for notifications for #{ifname}...")
     Registry.register(Nerves.NetworkInterface, ifname, [])
   end
 end

@@ -188,7 +188,7 @@ defmodule Nerves.NetworkInterface.Worker do
     Logger.debug "nerves_network_interface received #{inspect notif} and #{inspect data}"
     Registry.dispatch(Nerves.NetworkInterface, data.ifname, fn entries ->
       for {pid, _} <- entries do
-        Logger.debug("handle_info: Dispatching for pid = #{inspect pid} notif = #{inspect notif} data = #{inspect data}"
+        Logger.debug("handle_info: Dispatching for pid = #{inspect pid} notif = #{inspect notif} data = #{inspect data}")
         Logger.debug("Process info for pid = #{inspect pid}: #{inspect Process.info(pid)}")
 
         send(pid, {Nerves.NetworkInterface, notif, data})

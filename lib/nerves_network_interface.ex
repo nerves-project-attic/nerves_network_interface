@@ -51,6 +51,11 @@ defmodule Nerves.NetworkInterface do
     | :up
 
   @type ipv4_address :: String.t()
+  @type ipv6_address :: String.t()
+
+  @type dhcpv6_mode ::
+      :stateful
+    | :stateless
 
   @type ifsettings_ipv4 :: %{
     ifname: Nerves.NetworkInterface.interface_name(),
@@ -60,6 +65,15 @@ defmodule Nerves.NetworkInterface do
     ipv4_gateway: ipv4_address(),
     ipv4_subnet_mask: ipv4_address(),
     nameservers: list(ipv4_address())
+  }
+
+  @type ifsettings_ipv6 :: %{
+    ifname: Nerves.NetworkInterface.interface_name(),
+    ipv6_domain: String.t(),
+    ipv6_address: ipv6_address(),
+    ipv6_nameservers: list(ipv6_address()),
+    old_ipv6_address: ipv6_address(),
+    dhcpv6_mode: dhcpv6_mode()
   }
 
   @type ifstatus :: %{
@@ -81,6 +95,7 @@ defmodule Nerves.NetworkInterface do
   @type ifevent ::
      ifstatus()
    | ifsettings_ipv4()
+   | ifsettings_ipv6()
 
 
   @doc """

@@ -14,6 +14,8 @@
 
 defmodule Nerves.NetworkInterface do
 
+  require Logger
+
   @moduledoc """
   This module exposes a simplified view of Linux network configuration to
   applications.

@@ -1586,7 +1586,7 @@ static int get_ipaddr6(const struct ip_setting_handler *handler, struct netif *n
                     &ip6.s6_addr[15],
                     &prefix, &scope, &parsed_ifname[0])) {
         char address[INET6_ADDRSTRLEN] = {'\0', };
-        char prefix_str[4]             = {'\0', };
+        char prefix_str[5]             = {'\0', };
 
         if(strcmp(parsed_ifname, ifname) != 0) {
             debug("[%s %d]: Parsed ifname '%s' neq ifname = '%s' skipping...", __FILE__, __LINE__, parsed_ifname, ifname);
@@ -1602,7 +1602,7 @@ static int get_ipaddr6(const struct ip_setting_handler *handler, struct netif *n
           debug("[%s %d]: Address scope = '%s'", __FILE__, __LINE__, addr_scope);
         }
 
-        sprintf(prefix_str, "/%d", prefix);
+        snprintf(prefix_str, sizeof(prefix_str), "/%d", prefix);
 
         debug("[%s %d]: address = '%s'", __FILE__, __LINE__, address);
         debug("[%s %d]: prefix  = '%s'", __FILE__, __LINE__, prefix_str);

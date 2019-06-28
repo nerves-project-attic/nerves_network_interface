@@ -2,6 +2,6 @@
 /deps
 erl_crash.dump
 *.ez
-/priv/netif
+/priv/netif*
 *.o
 /doc

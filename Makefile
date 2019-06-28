@@ -24,7 +24,7 @@ ifeq ($(CROSSCOMPILE),)
 	DEFAULT_TARGETS = priv
     endif
 endif
-DEFAULT_TARGETS ?= priv priv/netif
+DEFAULT_TARGETS ?= priv priv/netif priv/netif_wrapper
 
 # Note: If crosscompiling, either ERL_PATH or both ERL_CFLAGS and ERL_LDFLAGS need
 #       to be specified or you'll get the host erl's versions and the linking step
@@ -77,5 +77,8 @@ priv/netif: src/erlcmd.o src/netif.o
 	# setuid root net_basic so that it can configure network interfaces
 	SUDO_ASKPASS=$(SUDO_ASKPASS) $(SUDO) -- sh -c 'chown root:root $@; chmod +s $@'
 
+priv/netif_wrapper:
+	cp ./scripts/netif_wrapper.sh ./priv/netif_wrapper
+
 clean:
-	rm -f priv/netif src/*.o
+	rm -f priv/netif* src/*.o

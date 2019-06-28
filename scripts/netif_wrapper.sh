@@ -13,5 +13,8 @@ while read line ; do
   :
 done
 
-## Kill the pid after to stop a zombie process occurring.
-kill -KILL $pid
+## Kill the pid after (if it's still alive) to stop a zombie process occurring.
+if ps -p $pid > /dev/null
+then
+  kill -KILL $pid
+fi

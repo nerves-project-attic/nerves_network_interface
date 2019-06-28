@@ -79,6 +79,7 @@ priv/netif: src/erlcmd.o src/netif.o
 
 priv/netif_wrapper:
 	cp ./scripts/netif_wrapper.sh ./priv/netif_wrapper
+	SUDO_ASKPASS=$(SUDO_ASKPASS) $(SUDO) -- sh -c 'chown root:root $@; chmod +s $@'
 
 clean:
 	rm -f priv/netif* src/*.o

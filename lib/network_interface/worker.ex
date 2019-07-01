@@ -121,8 +121,8 @@ defmodule Nerves.NetworkInterface.Worker do
   def init([]) do
     Logger.info "Start Network Interface Worker"
     executable = :code.priv_dir(:nerves_network_interface) ++ '/netif'
-    port = Port.open({:spawn_executable, executable},
-    [{:packet, 2}, :use_stdio, :binary])
+    port = Port.open({:spawn_executable, to_charlist(MuonTrap.muontrap_path())},
+    [{:args, ["--", executable]}, {:packet, 2}, :use_stdio, :binary])
     { :ok, %Nerves.NetworkInterface.Worker{port: port} }
   end
 

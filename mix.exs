@@ -41,6 +41,8 @@ defmodule Nerves.NetworkInterface.Mixfile do
   defp deps do
     [{:dialyxir,    ">= 0.0.0", only: [:dev, :test]},
      {:elixir_make, "~> 0.4", runtime: false},
-     {:ex_doc, "~> 0.11", only: :dev}]
+     {:ex_doc, "~> 0.11", only: :dev},
+     {:muontrap, "~> 0.4"}
+    ]
   end
 end

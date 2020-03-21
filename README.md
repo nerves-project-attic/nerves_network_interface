@@ -1,6 +1,18 @@
 # Nerves.NetworkInterface
 [![CircleCI](https://circleci.com/gh/nerves-project/nerves_network_interface.svg?style=svg)](https://circleci.com/gh/nerves-project/nerves_network_interface)
 
+> IMPORTANT: This package is no longer maintained and should not be used in new
+> projects.
+>
+> See [`VintageNet`](https://github.com/nerves-networking/vintage_net)
+> for the new networking library and
+> [`NervesPack`](https://github.com/nerves-project/nerves_pack) for getting
+> started quickly. The Nerves new project generator (`mix nerves.new
+> my_project`) creates projects using `NervesPack` and `VintageNet`.
+>
+> Existing projects using this library are encouraged to upgrade to
+> `VintageNet`.
+
 This package enables Elixir applications to configure, get the status of,
 and listen to events from LAN and WiFi network interfaces. It is not meant
 as a full-featured network interface management library and lacks a majority

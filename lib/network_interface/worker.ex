@@ -200,7 +200,7 @@ defmodule Nerves.NetworkInterface.Worker do
       {notif, data} = :erlang.binary_to_term(message, [:safe])
       dispatch(notif, data)
     rescue
-      e -> Logger.error("Error converting to term: #{inspect e}!"
+      e -> Logger.error("Error converting to term: #{inspect e}!")
     end
     {:noreply, state}
   end

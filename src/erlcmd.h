@@ -24,7 +24,11 @@
 /*
  * Erlang request/response processing
  */
-#define ERLCMD_BUF_SIZE 1024
+/*
+ * The IPv6 addresses' is a variable length list - th 16kB is enough to hold
+ * net.ipv6.conf.eth0.max_addresses=16.
+ */
+#define ERLCMD_BUF_SIZE 1024*16
 struct erlcmd
 {
     char buffer[ERLCMD_BUF_SIZE];

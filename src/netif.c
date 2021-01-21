@@ -35,6 +35,8 @@
 #include <linux/ipv6.h>
 #include <netinet/in.h>
 
+#include <libnetlink.h>
+
 // In Ubuntu 16.04, it seems that the new compat logic handling is preventing
 // IFF_LOWER_UP from being defined properly. It looks like a bug, so define it
 // here so that this file compiles.  A scan of all Nerves platforms and Ubuntu
@@ -89,6 +91,8 @@ struct netif {
 
     // Holder of the most recently encounted errno.
     int last_error;
+
+    struct rtnl_handle rth;
 };
 
 static void netif_init(struct netif *nb)
@@ -117,11 +121,15 @@ static void netif_init(struct netif *nb)
     if (nb->inet6_fd < 0)
         err(EXIT_FAILURE, "socket6");
 
+    if (rtnl_open(&nb->rth, 0) < 0)
+      err(EXIT_FAILURE, "rtnl_open");
+
     nb->seq = 1;
 }
 
 static void netif_cleanup(struct netif *nb)
 {
+    rtnl_close(&nb->rth);
     mnl_socket_close(nb->nl);
     mnl_socket_close(nb->nl_uevent);
     nb->nl = NULL;
@@ -1724,42 +1732,55 @@ static int remove_all_gateways6(struct netif *nb, const char *ifname)
 
 static int add_default_gateway(struct netif *nb, const char *ifname, const char *gateway_ip)
 {
-    debug("add_default_gateway %s %s", ifname, gateway_ip);
+  struct {
+    struct nlmsghdr n;
+    struct rtmsg    r;
+    char      buf[4096];
+  } req = {
+    .n.nlmsg_len    = NLMSG_LENGTH(sizeof(struct rtmsg)),
+    .n.nlmsg_flags  = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL,
+    .n.nlmsg_type   = RTM_NEWROUTE,
+    .r.rtm_family   = AF_INET,
+    .r.rtm_table    = RT_TABLE_MAIN,
+    .r.rtm_scope    = RT_SCOPE_NOWHERE, //scope changed to UNIVERSE below
+    .r.rtm_protocol = RTPROT_BOOT,
+    .r.rtm_scope    = RT_SCOPE_UNIVERSE,
+    .r.rtm_type     = RTN_UNICAST,
+  };
 
-    struct rtentry route;
-    memset(&route, 0, sizeof(route));
+  {
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(struct sockaddr_in));
+    addr.sin_family = AF_INET;
 
-    struct sockaddr_in *addr = (struct sockaddr_in *)&route.rt_gateway;
-    memset(addr, 0, sizeof(struct sockaddr_in));
-    addr->sin_family = AF_INET;
-    if (inet_pton(AF_INET, gateway_ip, &addr->sin_addr) <= 0) {
-        debug("Bad IP address for the default gateway: %s", gateway_ip);
-        nb->last_error = EINVAL;
-        return -1;
+    if (inet_pton(AF_INET, gateway_ip, &addr.sin_addr) <= 0) {
+      debug("Bad IP address for the default gateway: %s", gateway_ip);
+      nb->last_error = EINVAL;
+      return -1;
     }
 
-    addr = (struct sockaddr_in*) &route.rt_dst;
-    memset(addr, 0, sizeof(struct sockaddr_in));
-    addr->sin_family = AF_INET;
-    addr->sin_addr.s_addr = INADDR_ANY;
+    addattr_l(&req.n, sizeof(req), RTA_GATEWAY, &addr.sin_addr, 4);
+  }
 
-    addr = (struct sockaddr_in*) &route.rt_genmask;
-    memset(addr, 0, sizeof(struct sockaddr_in));
-    addr->sin_family = AF_INET;
-    addr->sin_addr.s_addr = INADDR_ANY;
+  if (ifname) {
+    int idx = ifname_to_index(nb, ifname);
 
-    route.rt_dev = (char *) ifname;
-    route.rt_flags = RTF_UP | RTF_GATEWAY;
-    route.rt_metric = 0;
-
-    int rc = ioctl(nb->inet_fd, SIOCADDRT, &route);
-    if (rc < 0 && errno != EEXIST) {
-        nb->last_error = errno;
-        return -1;
+    if (!idx) {
+      debug("[%s %d %s]: No such device: '%s'\r\n", __FILE__, __LINE__, __FUNCTION__, ifname);
+      nb->last_error = ENODEV;
+      return -1;
     }
+    addattr32(&req.n, sizeof(req), RTA_OIF, idx);
+  }
 
-    debug("add_default_gateway ok %s", ifname);
-    return 0;
+
+  if(rtnl_talk(&nb->rth, &req.n, NULL) < 0) {
+    printf("[%s %d %s]: Unable to tak to RTNL!!\r\n", __FILE__, __LINE__, __FUNCTION__);
+    return -1;
+  }
+
+  debug("add_default_gateway ok %s", ifname);
+  return 0;
 }
 
 static int prep_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, void **context)

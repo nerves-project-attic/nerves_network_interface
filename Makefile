@@ -36,7 +36,6 @@ ERL_EI_LIBDIR ?= $(ERL_PATH)/usr/lib
 ERL_LDFLAGS ?= -L$(ERL_EI_LIBDIR) -lei
 
 LDFLAGS += -lmnl
-LDFLAGS += -lnetlink
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter -pedantic
 
 

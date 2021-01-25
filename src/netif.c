@@ -1724,42 +1724,76 @@ static int remove_all_gateways6(struct netif *nb, const char *ifname)
 
 static int add_default_gateway(struct netif *nb, const char *ifname, const char *gateway_ip)
 {
-    debug("add_default_gateway %s %s", ifname, gateway_ip);
+  struct nlmsghdr *nlh = mnl_nlmsg_put_header(nb->nlbuf);
+  struct rtmsg    *rtm = mnl_nlmsg_put_extra_header(nlh, sizeof(struct rtmsg));;
 
-    struct rtentry route;
-    memset(&route, 0, sizeof(route));
+  int seq = nb->seq++;
+  int ret = 0;
 
-    struct sockaddr_in *addr = (struct sockaddr_in *)&route.rt_gateway;
-    memset(addr, 0, sizeof(struct sockaddr_in));
-    addr->sin_family = AF_INET;
-    if (inet_pton(AF_INET, gateway_ip, &addr->sin_addr) <= 0) {
-        debug("Bad IP address for the default gateway: %s", gateway_ip);
-        nb->last_error = EINVAL;
-        return -1;
+  memset(rtm, 0, sizeof(*rtm));
+
+  nlh->nlmsg_type = RTM_NEWROUTE;
+
+  nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_ACK;
+  nlh->nlmsg_seq   = seq;
+
+  rtm->rtm_family   = AF_INET;
+  rtm->rtm_table    = RT_TABLE_MAIN;
+  rtm->rtm_scope    = RT_SCOPE_UNIVERSE;
+  rtm->rtm_protocol = RTPROT_BOOT;
+  rtm->rtm_type     = RTN_UNICAST;
+  rtm->rtm_flags    = RTNH_F_ONLINK;
+
+  {
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(struct sockaddr_in));
+    addr.sin_family = AF_INET;
+
+    if (inet_pton(AF_INET, gateway_ip, &addr.sin_addr) <= 0) {
+      debug("Bad IP address for the default gateway: %s", gateway_ip);
+      nb->last_error = EINVAL;
+      return -1;
     }
 
-    addr = (struct sockaddr_in*) &route.rt_dst;
-    memset(addr, 0, sizeof(struct sockaddr_in));
-    addr->sin_family = AF_INET;
-    addr->sin_addr.s_addr = INADDR_ANY;
+    mnl_attr_put_u32(nlh, RTA_GATEWAY, addr.sin_addr.s_addr);
+  }
 
-    addr = (struct sockaddr_in*) &route.rt_genmask;
-    memset(addr, 0, sizeof(struct sockaddr_in));
-    addr->sin_family = AF_INET;
-    addr->sin_addr.s_addr = INADDR_ANY;
+  if (ifname) {
+    int idx = ifname_to_index(nb, ifname);
 
-    route.rt_dev = (char *) ifname;
-    route.rt_flags = RTF_UP | RTF_GATEWAY;
-    route.rt_metric = 0;
-
-    int rc = ioctl(nb->inet_fd, SIOCADDRT, &route);
-    if (rc < 0 && errno != EEXIST) {
-        nb->last_error = errno;
-        return -1;
+    if (!idx) {
+      debug("[%s %d %s]: No such device: '%s'\r\n", __FILE__, __LINE__, __FUNCTION__, ifname);
+      nb->last_error = ENODEV;
+      return -1;
     }
 
-    debug("add_default_gateway ok %s", ifname);
-    return 0;
+    mnl_attr_put_u32(nlh, RTA_OIF, idx);
+  }
+
+
+  if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0) {
+    debug("[%s %d %s]: mnl_socket_sendto", __FILE__, __LINE__, __FUNCTION__);
+    err(EXIT_FAILURE, "mnl_socket_sendto");
+  }
+
+  ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
+  if (ret < 0) {
+    debug("[%s %d %s]: mnl_socket_recvfrom", __FILE__, __LINE__, __FUNCTION__);
+    err(EXIT_FAILURE, "mnl_socket_recvfrom");
+  }
+
+  {
+    unsigned int portid = mnl_socket_get_portid(nb->nl);
+    ret = mnl_cb_run(nb->nlbuf, ret, seq, portid, NULL, NULL);
+
+    if (ret < 0) {
+      debug("[%s %d %s]: mnl_cb_run", __FILE__, __LINE__, __FUNCTION__);
+      err(EXIT_FAILURE, "mnl_cb_run");
+    }
+  }
+
+  debug("add_default_gateway ok %s", ifname);
+  return 0;
 }
 
 static int prep_default_gateway(const struct ip_setting_handler *handler, struct netif *nb, void **context)

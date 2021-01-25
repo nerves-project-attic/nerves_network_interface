@@ -47,7 +47,7 @@
 
 #include "erlcmd.h"
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
 #define debug(format, ...)  fprintf(stderr, format, __VA_ARGS__); fprintf(stderr, "\r\n")
 #define debugf(string) fprintf(stderr, string); fprintf(stderr, "\r\n")

@@ -1492,14 +1492,6 @@ static int remove_ipaddr(const struct ip_setting_handler *handler, struct netif 
     err(EXIT_FAILURE, "mnl_socket_sendto");
   }
 
-#if 0
-  ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
-  if (ret < 0) {
-    debug("[%s %d]: mnl_socket_recvfrom", __FILE__, __LINE__);
-    err(EXIT_FAILURE, "mnl_socket_recvfrom");
-  }
-#endif
-
   {
     unsigned int portid = mnl_socket_get_portid(nb->nl);
     ret = mnl_cb_run(nb->nlbuf, ret, seq, portid, NULL, NULL);

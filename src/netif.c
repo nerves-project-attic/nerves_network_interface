@@ -691,7 +691,9 @@ static int prep_mac_address_ioctl(const struct ip_setting_handler *handler, stru
 static int set_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
 static int get_mac_address_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
 static int prep_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context);
+static int prep_ipaddr(const struct ip_setting_handler *handler, struct netif *nb, void **context);
 static int set_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
+static int remove_ipaddr(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
 static int get_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
 static int set_ipaddr6_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context);
 static int get_ipaddr6(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
@@ -735,6 +737,13 @@ static const struct ip_setting_handler handlers[] = {
     .get  = get_ipaddr_ioctl,
     .ioctl_set = SIOCSIFADDR,
     .ioctl_get = SIOCGIFADDR,
+  },
+  { .name = "-ipv4_address",
+    .prep = prep_ipaddr,
+    .set  = remove_ipaddr,
+    .get  = NULL,
+    .ioctl_set = 0,
+    .ioctl_get = 0,
   },
   { .name = "ipv4_subnet_mask",
     .prep = prep_ipaddr_ioctl,
@@ -837,8 +846,9 @@ static int prep_mac_address_ioctl(const struct ip_setting_handler *handler, stru
     if (erlcmd_decode_string(nb->req, &nb->req_index, macaddr_str, sizeof(macaddr_str)) < 0)
         errx(EXIT_FAILURE, "mac address parameter required for '%s'", handler->name);
 
-    // Be forgiving and if the user specifies an empty IP address, just skip
-    // this request.
+    /* Be forgiving and if the user specifies an empty IP address, just skip
+     * this request.
+     */
     if (macaddr_str[0] == '\0')
         *context = NULL;
     else
@@ -1308,8 +1318,9 @@ static int prep_ipaddr_ioctl(const struct ip_setting_handler *handler, struct ne
     if (erlcmd_decode_string(nb->req, &nb->req_index, ipaddr, INET_ADDRSTRLEN) < 0)
         errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
 
-    // Be forgiving and if the user specifies an empty IP address, just skip
-    // this request.
+    /* Be forgiving and if the user specifies an empty IP address, just skip
+     * this request.
+     */
     if (ipaddr[0] == '\0')
         *context = NULL;
     else
@@ -1317,6 +1328,26 @@ static int prep_ipaddr_ioctl(const struct ip_setting_handler *handler, struct ne
 
     return 0;
 }
+
+static int prep_ipaddr(const struct ip_setting_handler *handler, struct netif *nb, void **context)
+{
+    #define PREFIX_LEN  (3) /* ':' + 2 bytes i.e. 1.2.3.4:32 */
+    char ipaddr[INET_ADDRSTRLEN+PREFIX_LEN];
+    if (erlcmd_decode_string(nb->req, &nb->req_index, ipaddr, INET_ADDRSTRLEN) < 0)
+        errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
+
+
+    /* Be forgiving and if the user specifies an empty IP address, just skip
+     * this request.
+     */
+    if (ipaddr[0] == '\0')
+        *context = NULL;
+    else
+      *context = strdup(ipaddr);
+
+    return 0;
+}
+
 
 #define access_setting_handler(ptr) ((const struct ip_setting_handler *) ptr)
 static int prep_ipaddr6_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context)
@@ -1401,6 +1432,85 @@ static int set_ipaddr_ioctl(const struct ip_setting_handler *handler, struct net
     }
 
     return 0;
+}
+
+static int remove_ipaddr(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
+{
+  const char *ipaddr = (const char *) context;
+  char *prefix = (const char *) strchr(context, ':');
+
+  struct ifreq ifr;
+  memset(&ifr, 0, sizeof(ifr));
+  strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+  struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
+  struct nlmsghdr    *nlh  = mnl_nlmsg_put_header(nb->nlbuf);
+  struct ifaddrmsg   *ipm  = mnl_nlmsg_put_extra_header(nlh, sizeof(struct ifaddrmsg));;
+
+  int seq = nb->seq++;
+  int ret = 0;
+
+  nlh->nlmsg_type  = RTM_DELADDR;
+  nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+  nlh->nlmsg_seq   = seq;
+
+  if(prefix != NULL) {
+    /* Prefix length attached */
+    *prefix = '\0';
+    prefix++;
+    ipm->ifa_prefixlen = atoi(prefix);
+    debug("[%s %d]: ipm->ifa_prefixlen = %d\r\n", __FILE__, __LINE__, ipm->ifa_prefixlen);
+  }
+
+  ipm->ifa_family = AF_INET;
+  ipm->ifa_flags = 0;
+  ipm->ifa_scope = 0;
+
+  debug("[%s %d]: remove_ipaddr for '%s'\r\n", __FILE__, __LINE__, ifname);
+
+  addr->sin_family = AF_INET;
+  if (inet_pton(AF_INET, ipaddr, &addr->sin_addr) <= 0) {
+    debug("Bad IP address for '%s': %s", handler->name, ipaddr);
+    nb->last_error = EINVAL;
+    return -1;
+  }
+
+  mnl_attr_put_u32(nlh, IFA_ADDRESS, addr->sin_addr.s_addr);
+
+  if (ifname) {
+    ipm->ifa_index = ifname_to_index(nb, ifname);
+
+    if (!ipm->ifa_index) {
+      debug("[%s %d]: No such device: '%s'\r\n", __FILE__, __LINE__, ifname);
+      nb->last_error = ENODEV;
+      return -1;
+    }
+  }
+
+  if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0) {
+    debug("[%s %d]: mnl_socket_sendto", __FILE__, __LINE__);
+    err(EXIT_FAILURE, "mnl_socket_sendto");
+  }
+
+  ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
+  if (ret < 0) {
+    debug("[%s %d]: mnl_socket_recvfrom", __FILE__, __LINE__);
+    err(EXIT_FAILURE, "mnl_socket_recvfrom");
+  }
+
+  {
+    unsigned int portid = mnl_socket_get_portid(nb->nl);
+    ret = mnl_cb_run(nb->nlbuf, ret, seq, portid, NULL, NULL);
+
+    if (ret < 0) {
+      debug("[%s %d]: mnl_cb_run", __FILE__, __LINE__);
+      err(EXIT_FAILURE, "mnl_cb_run");
+    }
+  }
+
+  debug("remove_ipaddr ok %s", ifname);
+
+  return 0;
 }
 
 static int get_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname)
@@ -1762,7 +1872,7 @@ static int add_default_gateway(struct netif *nb, const char *ifname, const char 
     int idx = ifname_to_index(nb, ifname);
 
     if (!idx) {
-      debug("[%s %d %s]: No such device: '%s'\r\n", __FILE__, __LINE__, __FUNCTION__, ifname);
+      debug("[%s %d]: No such device: '%s'\r\n", __FILE__, __LINE__, ifname);
       nb->last_error = ENODEV;
       return -1;
     }
@@ -1772,13 +1882,13 @@ static int add_default_gateway(struct netif *nb, const char *ifname, const char 
 
 
   if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0) {
-    debug("[%s %d %s]: mnl_socket_sendto", __FILE__, __LINE__, __FUNCTION__);
+    debug("[%s %d]: mnl_socket_sendto", __FILE__, __LINE__);
     err(EXIT_FAILURE, "mnl_socket_sendto");
   }
 
   ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
   if (ret < 0) {
-    debug("[%s %d %s]: mnl_socket_recvfrom", __FILE__, __LINE__, __FUNCTION__);
+    debug("[%s %d]: mnl_socket_recvfrom", __FILE__, __LINE__);
     err(EXIT_FAILURE, "mnl_socket_recvfrom");
   }
 
@@ -1787,7 +1897,7 @@ static int add_default_gateway(struct netif *nb, const char *ifname, const char 
     ret = mnl_cb_run(nb->nlbuf, ret, seq, portid, NULL, NULL);
 
     if (ret < 0) {
-      debug("[%s %d %s]: mnl_cb_run", __FILE__, __LINE__, __FUNCTION__);
+      debug("[%s %d]: mnl_cb_run", __FILE__, __LINE__);
       err(EXIT_FAILURE, "mnl_cb_run");
     }
   }

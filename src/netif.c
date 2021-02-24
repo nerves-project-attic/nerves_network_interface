@@ -1451,7 +1451,7 @@ static int remove_ipaddr(const struct ip_setting_handler *handler, struct netif 
   int ret = 0;
 
   nlh->nlmsg_type  = RTM_DELADDR;
-  nlh->nlmsg_flags = NLM_F_REQUEST;// | NLM_F_ACK;
+  nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
   nlh->nlmsg_seq   = seq;
 
   if(prefix != NULL) {
@@ -1490,6 +1490,12 @@ static int remove_ipaddr(const struct ip_setting_handler *handler, struct netif 
   if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0) {
     debug("[%s %d]: mnl_socket_sendto", __FILE__, __LINE__);
     err(EXIT_FAILURE, "mnl_socket_sendto");
+  }
+
+  ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
+  if (ret < 0) {
+    debug("[%s %d]: mnl_socket_recvfrom", __FILE__, __LINE__);
+    err(EXIT_FAILURE, "mnl_socket_recvfrom");
   }
 
   {

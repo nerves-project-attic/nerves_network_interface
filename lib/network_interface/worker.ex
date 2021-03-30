@@ -171,6 +171,8 @@ defmodule Nerves.NetworkInterface.Worker do
     {:reply, response, state }
   end
   def handle_call({:setup, ifname, options}, _from, state) do
+    Logger.debug(":setup #{ifname} options = #{inspect options}")
+
     response = call_port(state, :setup, {ifname, options})
     {:reply, response, state }
   end

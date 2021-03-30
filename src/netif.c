@@ -14,6 +14,11 @@
  * limitations under the License.
  */
 
+/****************************************************************
+ * Copyright (C) 2021 Schneider Electric                        *
+ ****************************************************************/
+
+
 #include <err.h>
 #include <poll.h>
 #include <stdio.h>
@@ -47,14 +52,7 @@
 
 #include "erlcmd.h"
 
-//#define DEBUG
-#ifdef DEBUG
-#define debug(format, ...)  fprintf(stderr, format, __VA_ARGS__); fprintf(stderr, "\r\n")
-#define debugf(string) fprintf(stderr, string); fprintf(stderr, "\r\n")
-#else
-#define debug(format, ...)
-#define debugf(string)
-#endif
+#include "debug.h"
 
 struct netif {
     // NETLINK_ROUTE socket information
@@ -394,6 +392,8 @@ static void nl_uevent_process(struct netif *nb)
 
 static void handle_notification(struct netif *nb, int bytecount)
 {
+    debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __FUNCTION__, bytecount);
+
     // Create the notification
     nb->resp_index = sizeof(uint16_t); // Skip over payload size
     nb->resp[nb->resp_index++] = 'n';
@@ -411,6 +411,8 @@ static void handle_notification(struct netif *nb, int bytecount)
 
 static void handle_async_response(struct netif *nb, int bytecount)
 {
+    debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __FUNCTION__, bytecount);
+
     nb->response_callback(nb, bytecount);
     nb->response_callback = NULL;
     nb->response_error_callback = NULL;
@@ -418,6 +420,8 @@ static void handle_async_response(struct netif *nb, int bytecount)
 
 static void handle_async_response_error(struct netif *nb, int err)
 {
+    debug("[%s %d %s]: err = %d\r\n", __FILE__, __LINE__, __FUNCTION__, err);
+
     nb->response_error_callback(nb, err);
     nb->response_callback = NULL;
     nb->response_error_callback = NULL;
@@ -426,6 +430,9 @@ static void handle_async_response_error(struct netif *nb, int err)
 static void nl_route_process(struct netif *nb)
 {
     int bytecount = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
+
+    debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __FUNCTION__, bytecount);
+
     if (bytecount <= 0)
         err(EXIT_FAILURE, "mnl_socket_recvfrom");
 
@@ -466,6 +473,8 @@ static void netif_handle_interfaces(struct netif *nb)
 
 static void netif_handle_status_callback(struct netif *nb, int bytecount)
 {
+    debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __FUNCTION__, bytecount);
+
     start_response(nb);
 
     int original_resp_index = nb->resp_index;
@@ -483,6 +492,8 @@ static void netif_handle_status_callback(struct netif *nb, int bytecount)
 
 static void netif_handle_status_error_callback(struct netif *nb, int err)
 {
+    debug("[%s %d %s]: err = %d\r\n", __FILE__, __LINE__, __FUNCTION__, err);
+
     start_response(nb);
     erlcmd_encode_errno_error(nb->resp, &nb->resp_index, err);
     send_response(nb);
@@ -726,10 +737,11 @@ static int set_ipv6_forwarding(const struct ip_setting_handler *handler, struct 
 static int get_ipv6_forwarding(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname);
 
 
-// These handlers are listed in the order that they should be invoked when
-// configuring the interface. For example, "ipv4_gateway" is listed at the end
-// so that it is set after the address and subnet_mask. If this is not done,
-// setting the gateway may fail since Linux thinks that it is on the wrong subnet.
+/* These handlers are listed in the order that they should be invoked when
+ * configuring the interface. For example, "ipv4_gateway" is listed at the end
+ * so that it is set after the address and subnet_mask. If this is not done,
+ * setting the gateway may fail since Linux thinks that it is on the wrong subnet.
+ */
 static const struct ip_setting_handler handlers[] = {
   { .name = "ipv4_address",
     .prep = prep_ipaddr_ioctl,
@@ -1333,7 +1345,7 @@ static int prep_ipaddr(const struct ip_setting_handler *handler, struct netif *n
 {
     #define PREFIX_LEN  (3) /* ':' + 2 bytes i.e. 1.2.3.4:32 */
     char ipaddr[INET_ADDRSTRLEN+PREFIX_LEN];
-    if (erlcmd_decode_string(nb->req, &nb->req_index, ipaddr, INET_ADDRSTRLEN) < 0)
+    if (erlcmd_decode_string(nb->req, &nb->req_index, ipaddr, INET_ADDRSTRLEN+PREFIX_LEN) < 0)
         errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
 
 
@@ -1418,15 +1430,19 @@ static int set_ipaddr_ioctl(const struct ip_setting_handler *handler, struct net
     strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
 
     struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
+
+    info("[%s %d %s]: address = '%s'\r\n", __FILE__, __LINE__, __FUNCTION__, ipaddr);
+
     addr->sin_family = AF_INET;
+
     if (inet_pton(AF_INET, ipaddr, &addr->sin_addr) <= 0) {
-        debug("Bad IP address for '%s': %s", handler->name, ipaddr);
+        error("Bad IP address for '%s': %s", handler->name, ipaddr);
         nb->last_error = EINVAL;
         return -1;
     }
 
     if (ioctl(nb->inet_fd, handler->ioctl_set, &ifr) < 0) {
-        debug("ioctl(0x%04x) failed for setting '%s': %s", handler->ioctl_set, handler->name, strerror(errno));
+        error("ioctl(0x%04x) failed for setting '%s': %s", handler->ioctl_set, handler->name, strerror(errno));
         nb->last_error = errno;
         return -1;
     }
@@ -1437,7 +1453,7 @@ static int set_ipaddr_ioctl(const struct ip_setting_handler *handler, struct net
 static int remove_ipaddr(const struct ip_setting_handler *handler, struct netif *nb, const char *ifname, void *context)
 {
   const char *ipaddr = (const char *) context;
-  char *prefix = (const char *) strchr(context, ':');
+  char *prefix = (char *) strchr(context, ':');
 
   struct ifreq ifr;
   memset(&ifr, 0, sizeof(ifr));
@@ -1500,11 +1516,14 @@ static int remove_ipaddr(const struct ip_setting_handler *handler, struct netif 
 
   {
     unsigned int portid = mnl_socket_get_portid(nb->nl);
+
+    debug("[%s %d %s]: mnl_cb_run(ret = %d; seq = %d; portid = %d\r\n", __FILE__, __LINE__, __FUNCTION__, ret, seq, portid);
+
     ret = mnl_cb_run(nb->nlbuf, ret, seq, portid, NULL, NULL);
 
     if (ret < 0) {
-      debug("[%s %d]: mnl_cb_run", __FILE__, __LINE__);
-      err(EXIT_FAILURE, "mnl_cb_run");
+      debug("[%s %d %s]: mnl_cb_run ret = %d", __FILE__, __LINE__, __FUNCTION__, ret);
+      return 0;
     }
   }
 
@@ -1860,7 +1879,7 @@ static int add_default_gateway(struct netif *nb, const char *ifname, const char 
     addr.sin_family = AF_INET;
 
     if (inet_pton(AF_INET, gateway_ip, &addr.sin_addr) <= 0) {
-      debug("Bad IP address for the default gateway: %s", gateway_ip);
+      error("Bad IP address for the default gateway: %s", gateway_ip);
       nb->last_error = EINVAL;
       return -1;
     }
@@ -1882,13 +1901,14 @@ static int add_default_gateway(struct netif *nb, const char *ifname, const char 
 
 
   if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0) {
-    debug("[%s %d]: mnl_socket_sendto", __FILE__, __LINE__);
+    error("[%s %d %s]: mnl_socket_sendto", __FILE__, __LINE__, __FUNCTION__);
     err(EXIT_FAILURE, "mnl_socket_sendto");
   }
 
   ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
   if (ret < 0) {
-    debug("[%s %d]: mnl_socket_recvfrom", __FILE__, __LINE__);
+    error("[%s %d %s]: mnl_socket_recvfrom", __FILE__, __LINE__, __FUNCTION__);
+
     err(EXIT_FAILURE, "mnl_socket_recvfrom");
   }
 
@@ -1897,7 +1917,7 @@ static int add_default_gateway(struct netif *nb, const char *ifname, const char 
     ret = mnl_cb_run(nb->nlbuf, ret, seq, portid, NULL, NULL);
 
     if (ret < 0) {
-      debug("[%s %d]: mnl_cb_run", __FILE__, __LINE__);
+      error("[%s %d %s]: mnl_cb_run", __FILE__, __LINE__, __FUNCTION__);
       err(EXIT_FAILURE, "mnl_cb_run");
     }
   }
@@ -1931,7 +1951,7 @@ static int set_default_gateway6(const struct ip_setting_handler *handler, struct
     (void) handler;
     const char *gateway = context;
 
-    // If no gateway was specified, then we're done.
+    /* If no gateway was specified, then we're done. */
     if (*gateway == '\0')
         return 0;
 
@@ -1949,7 +1969,7 @@ static int remove_gateway6_ioctl(const struct ip_setting_handler *handler, struc
     return remove_all_gateways6(nb, ifname);
 
   if (inet_pton(AF_INET6, gateway_ip, (void *) &gw) <= 0) {
-    debug("Bad IP address for the default gateway v6: %s", gateway_ip);
+    error("Bad IP address for the default gateway v6: %s", gateway_ip);
     nb->last_error = EINVAL;
     return -1;
   }
@@ -1972,7 +1992,7 @@ static int get_default_gateway6(const struct ip_setting_handler *handler, struct
     find_default_gateway6(nb, oif, gateway_ip);
     debug("[%s %d]: gateway_ip = '%s'\r\n", __FILE__, __LINE__, gateway_ip);
 
-    // If the gateway isn't found, then the empty string is what we want.
+    /* If the gateway isn't found, then the empty string is what we want. */
     encode_kv_string(nb, handler->name, gateway_ip);
     return 0;
 }
@@ -1986,7 +2006,7 @@ static int add_default_gateway6(struct netif *nb, const char *ifname, const char
     *dst = in6addr_any;
 
     if (inet_pton(AF_INET6, gateway_ip, (void *) gw) <= 0) {
-        debug("Bad IP address for the default gateway v6: %s", gateway_ip);
+        error("Bad IP address for the default gateway v6: %s", gateway_ip);
         nb->last_error = EINVAL;
         return -1;
     }
@@ -1998,7 +2018,7 @@ static int add_default_gateway6(struct netif *nb, const char *ifname, const char
 
     int rc = ioctl(nb->inet6_fd, SIOCADDRT, &route);
     if (rc < 0 && errno != EEXIST) {
-        debug("IOCTL failed for the default gateway v6: %s", gateway_ip);
+        error("IOCTL failed for the default gateway v6: %s", gateway_ip);
         nb->last_error = errno;
         return -1;
     }
@@ -2010,16 +2030,15 @@ static int set_default_gateway(const struct ip_setting_handler *handler, struct 
     (void) handler;
     const char *gateway = context;
 
-    debug("set_default_gateway %s", ifname);
+    info("set_default_gateway %s; gateway = '%s'", ifname, gateway);
 
-    // Before one can be set, any configured gateways need to be removed.
+    /* Before one can be set, any configured gateways need to be removed. */
     if (remove_all_gateways(nb, ifname) < 0) {
-
-        debug("remove_all_gateways failed for '%s' : %s", handler->name, gateway);
+        error("remove_all_gateways failed for '%s' : %s", handler->name, gateway);
         return -1;
     }
 
-    // If no gateway was specified, then we're done.
+    /* If no gateway was specified, then we're done. */
     if (*gateway == '\0')
         return 0;
 
@@ -2140,6 +2159,7 @@ static void netif_handle_set(struct netif *nb,
     if (handler != NULL) {
       handler->prep(handler, nb, &handler_context[handler - handlers]);
     } else {
+      debug("%s %d]: No known handler for '%s' = %p! Skipping term...\r\n", __FILE__, __LINE__, name, (void *) handler);
       ei_skip_term(nb->req, &nb->req_index);
     }
   }

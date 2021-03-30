@@ -161,7 +161,7 @@ defmodule Nerves.NetworkInterface do
   @doc """
   Register for Nerves.NetworkInterface events on a specific interface
 
-  The calling process is the process that will be registered for 
+  The calling process is the process that will be registered for
   all events. The events can be handled by implementing a `handle_info\2`.
 
   `def handle_info({Nerves.NetworkInterface, :ifchanged, ifstate} = event, state)`

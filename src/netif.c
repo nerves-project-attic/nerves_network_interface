@@ -1517,14 +1517,13 @@ static int remove_ipaddr(const struct ip_setting_handler *handler, struct netif 
   {
     unsigned int portid = mnl_socket_get_portid(nb->nl);
 
-    debug("[%s %d]: mnl_cb_run(ret = %d; seq = %d; portid = %d\r\n", __FILE__, __LINE__, ret, seq, portid);
+    debug("[%s %d %s]: mnl_cb_run(ret = %d; seq = %d; portid = %d\r\n", __FILE__, __LINE__, __FUNCTION__, ret, seq, portid);
 
     ret = mnl_cb_run(nb->nlbuf, ret, seq, portid, NULL, NULL);
 
     if (ret < 0) {
-      debug("[%s %d]: mnl_cb_run ret = %d", __FILE__, __LINE__, ret);
+      debug("[%s %d %s]: mnl_cb_run ret = %d", __FILE__, __LINE__, __FUNCTION__, ret);
       return 0;
-      //err(EXIT_FAILURE, "mnl_cb_run");
     }
   }
 

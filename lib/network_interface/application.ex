@@ -4,11 +4,10 @@ defmodule Nerves.NetworkInterface.Application do
   use Application
 
   def start(_type, _args) do
-    import Supervisor.Spec, warn: false
 
     children = [
-      supervisor(Registry, [:duplicate, Nerves.NetworkInterface]),
-      worker(Nerves.NetworkInterface.Worker, []),
+      %{id: Registry, start: {Registry, :start_link, [[keys: :duplicate, name: Nerves.NetworkInterface]]}},
+      %{id: Nerves.NetworkInterface.Worker, start: {Nerves.NetworkInterface.Worker, :start_link, []}}
     ]
 
     opts = [strategy: :rest_for_one, name: Nerves.NervesInterface.Supervisor]

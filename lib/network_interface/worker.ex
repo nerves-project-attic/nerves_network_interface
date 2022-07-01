@@ -225,7 +225,7 @@ defmodule Nerves.NetworkInterface.Worker do
     msg = {command, arguments}
     send state.port, {self(), {:command, :erlang.term_to_binary(msg)}}
     receive do
-      {_, {:data, bs = <<?r, response::binary>>}} ->
+      {_, {:data, <<?r, response::binary>>}} ->
         :erlang.binary_to_term(response)
     after
       4_000 ->

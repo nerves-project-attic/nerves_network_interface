@@ -197,9 +197,9 @@ defmodule Nerves.NetworkInterface.Worker do
     end)
   end
 
-  def handle_info({_, {:data, <<?n, message::binary>>}}, state) do
+  def handle_info({_, input = {:data, <<?n, message::binary>>}}, state) do
     try do
-      {notif, data} = :erlang.binary_to_term(message, [:safe])
+      {notif, data} = :erlang.binary_to_term(message)
       dispatch(notif, data)
     rescue
       e -> Logger.error("Error converting to term: #{inspect e}!")
@@ -225,7 +225,7 @@ defmodule Nerves.NetworkInterface.Worker do
     msg = {command, arguments}
     send state.port, {self(), {:command, :erlang.term_to_binary(msg)}}
     receive do
-      {_, {:data, <<?r, response::binary>>}} ->
+      {_, {:data, bs = <<?r, response::binary>>}} ->
         :erlang.binary_to_term(response)
     after
       4_000 ->

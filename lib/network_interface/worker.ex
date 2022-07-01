@@ -197,7 +197,7 @@ defmodule Nerves.NetworkInterface.Worker do
     end)
   end
 
-  def handle_info({_, input = {:data, <<?n, message::binary>>}}, state) do
+  def handle_info({_, _input = {:data, <<?n, message::binary>>}}, state) do
     try do
       {notif, data} = :erlang.binary_to_term(message)
       dispatch(notif, data)

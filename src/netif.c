@@ -125,10 +125,17 @@ static void netif_cleanup(struct netif *nb)
     nb->nl = NULL;
 }
 
-static void start_response(struct netif *nb)
+static inline void start_response(struct netif *nb)
 {
     nb->resp_index = sizeof(uint16_t); // Space for payload size
     nb->resp[nb->resp_index++] = 'r'; // Indicate response
+    ei_encode_version(nb->resp, &nb->resp_index);
+}
+
+static inline void start_notification(struct netif *nb)
+{
+    nb->resp_index = sizeof(uint16_t); // Skip over payload size
+    nb->resp[nb->resp_index++] = 'n';
     ei_encode_version(nb->resp, &nb->resp_index);
 }
 
@@ -214,6 +221,7 @@ static void encode_kv_string(struct netif *nb, const char *key, const char *str)
     ei_encode_atom(nb->resp, &nb->resp_index, key);
     encode_string(nb->resp, &nb->resp_index, str);
 }
+
 static void encode_kv_atom(struct netif *nb, const char *key, const char *str)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, key);
@@ -222,11 +230,10 @@ static void encode_kv_atom(struct netif *nb, const char *key, const char *str)
 
 static void encode_kv_macaddr(struct netif *nb, const char *key, const unsigned char *macaddr)
 {
+    char macaddr_str[MACADDR_STR_LEN] = {'\0'};
+
     ei_encode_atom(nb->resp, &nb->resp_index, key);
 
-    char macaddr_str[MACADDR_STR_LEN];
-
-    // Only handle 6 byte mac addresses (to my knowledge, this is the only case)
     macaddr_to_string(macaddr, macaddr_str);
 
     encode_string(nb->resp, &nb->resp_index, macaddr_str);
@@ -281,8 +288,10 @@ static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
         return MNL_CB_ERROR;
     }
 
-    int count = 7; // Number of fields that we always encode
+    int count = 8; /* Number of fields that we always encode */
     int i;
+    int encoded_item = 0;
+
     for (i = 0; i <= IFLA_MAX; i++)
         if (tb[i])
             count++;
@@ -290,9 +299,7 @@ static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
     ei_encode_map_header(nb->resp, &nb->resp_index, count);
 
     encode_kv_long(nb, "index", ifm->ifi_index);
-
-    ei_encode_atom(nb->resp, &nb->resp_index, "type");
-    ei_encode_atom(nb->resp, &nb->resp_index, ifm->ifi_type == ARPHRD_ETHER ? "ethernet" : "other");
+    encode_kv_atom(nb, "type", ifm->ifi_type == ARPHRD_ETHER ? "ethernet" : "other");
 
     encode_kv_bool(nb, "is_up", ifm->ifi_flags & IFF_UP);
     encode_kv_bool(nb, "is_broadcast", ifm->ifi_flags & IFF_BROADCAST);
@@ -301,20 +308,27 @@ static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
     encode_kv_bool(nb, "is_multicast", ifm->ifi_flags & IFF_MULTICAST);
     encode_kv_bool(nb, "is_all-multicast", ifm->ifi_flags & IFF_ALLMULTI);
 
-    if (tb[IFLA_MTU])
+    if (tb[IFLA_MTU]) {
         encode_kv_ulong(nb, "mtu", mnl_attr_get_u32(tb[IFLA_MTU]));
-    if (tb[IFLA_IFNAME])
+    }
+    if (tb[IFLA_IFNAME]) {
         encode_kv_string(nb, "ifname", mnl_attr_get_str(tb[IFLA_IFNAME]));
-    if (tb[IFLA_ADDRESS])
+    }
+    if (tb[IFLA_ADDRESS]) {
         encode_kv_macaddr(nb, "mac_address", mnl_attr_get_payload(tb[IFLA_ADDRESS]));
-    if (tb[IFLA_BROADCAST])
+    }
+    if (tb[IFLA_BROADCAST]) {
         encode_kv_macaddr(nb, "mac_broadcast", mnl_attr_get_payload(tb[IFLA_BROADCAST]));
-    if (tb[IFLA_LINK])
+    }
+    if (tb[IFLA_LINK]) {
         encode_kv_ulong(nb, "link", mnl_attr_get_u32(tb[IFLA_LINK]));
-    if (tb[IFLA_OPERSTATE])
+    }
+    if (tb[IFLA_OPERSTATE]) {
         encode_kv_operstate(nb, mnl_attr_get_u32(tb[IFLA_OPERSTATE]));
-    if (tb[IFLA_STATS])
+    }
+    if (tb[IFLA_STATS]) {
         encode_kv_stats(nb, "stats", tb[IFLA_STATS]);
+    }
 
     return MNL_CB_OK;
 }
@@ -362,9 +376,7 @@ static void nl_uevent_process(struct netif *nb)
     // Check that we have the required fields that this is a
     // "net" subsystem event. If yes, send the notification.
     if (ifname && subsystem && ifindex && strcmp(subsystem, "net") == 0) {
-        nb->resp_index = sizeof(uint16_t); // Skip over payload size
-        nb->resp[nb->resp_index++] = 'n';
-        ei_encode_version(nb->resp, &nb->resp_index);
+        start_notification(nb);
 
         ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
 
@@ -395,18 +407,17 @@ static void handle_notification(struct netif *nb, int bytecount)
     debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __FUNCTION__, bytecount);
 
     // Create the notification
-    nb->resp_index = sizeof(uint16_t); // Skip over payload size
-    nb->resp[nb->resp_index++] = 'n';
-    ei_encode_version(nb->resp, &nb->resp_index);
+    start_notification(nb);
 
     ei_encode_tuple_header(nb->resp, &nb->resp_index, 2);
 
     // Currently, the only notifications are interface changes.
     ei_encode_atom(nb->resp, &nb->resp_index, "ifchanged");
+
     if (mnl_cb_run(nb->nlbuf, bytecount, 0, 0, netif_build_ifinfo, nb) <= 0)
         err(EXIT_FAILURE, "mnl_cb_run");
 
-    erlcmd_send(nb->resp, nb->resp_index);
+    send_response(nb);
 }
 
 static void handle_async_response(struct netif *nb, int bytecount)
@@ -538,7 +549,7 @@ static void netif_set_ifflags(struct netif *nb,
 
     start_response(nb);
 
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+    memcpy(ifr.ifr_name, ifname, IFNAMSIZ);
     if (ioctl(nb->inet_fd, SIOCGIFFLAGS, &ifr) < 0) {
         debug("SIOCGIFFLAGS error: %s", strerror(errno));
         erlcmd_encode_errno_error(nb->resp, &nb->resp_index, errno);
@@ -1281,7 +1292,7 @@ static int set_mac_address_ioctl(const struct ip_setting_handler *handler, struc
 
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+    memcpy(ifr.ifr_name, ifname, IFNAMSIZ);
 
     struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
     addr->sin_family = AF_UNIX;
@@ -1305,7 +1316,7 @@ static int get_mac_address_ioctl(const struct ip_setting_handler *handler, struc
 {
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+    memcpy(ifr.ifr_name, ifname, IFNAMSIZ);
 
     if (ioctl(nb->inet_fd, handler->ioctl_get, &ifr) < 0) {
         debug("ioctl(0x%04x) failed for getting '%s': %s", handler->ioctl_get, handler->name, strerror(errno));
@@ -1427,7 +1438,7 @@ static int set_ipaddr_ioctl(const struct ip_setting_handler *handler, struct net
 
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+    memcpy(ifr.ifr_name, ifname, IFNAMSIZ);
 
     struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
 
@@ -1457,7 +1468,7 @@ static int remove_ipaddr(const struct ip_setting_handler *handler, struct netif 
 
   struct ifreq ifr;
   memset(&ifr, 0, sizeof(ifr));
-  strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+  strncpy(ifr.ifr_name, ifname, IFNAMSIZ-1);
 
   struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
   struct nlmsghdr    *nlh  = mnl_nlmsg_put_header(nb->nlbuf);
@@ -1536,7 +1547,7 @@ static int get_ipaddr_ioctl(const struct ip_setting_handler *handler, struct net
 {
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ-1);
 
     if (ioctl(nb->inet_fd, handler->ioctl_get, &ifr) < 0) {
         debug("ioctl(0x%04x) failed for getting '%s': %s. Skipping...", handler->ioctl_get, handler->name, strerror(errno));
@@ -1546,7 +1557,7 @@ static int get_ipaddr_ioctl(const struct ip_setting_handler *handler, struct net
 
     struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
     if (addr->sin_family == AF_INET) {
-        char addrstr[INET_ADDRSTRLEN];
+        char addrstr[INET_ADDRSTRLEN] = {'\0', };
         if (!inet_ntop(addr->sin_family, &addr->sin_addr, addrstr, sizeof(addrstr))) {
             debug("inet_ntop failed for '%s'? : %s", handler->name, strerror(errno));
             nb->last_error = errno;
@@ -1565,7 +1576,7 @@ static int get_if_index(struct netif *nb, const char *ifname, int * const if_ind
 {
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ-1);
 
     if (ioctl(nb->inet_fd, SIOGIFINDEX, &ifr) < 0) {
         nb->last_error = errno;
@@ -1990,7 +2001,7 @@ static int get_default_gateway6(const struct ip_setting_handler *handler, struct
         return -1;
 
     find_default_gateway6(nb, oif, gateway_ip);
-    debug("[%s %d]: gateway_ip = '%s'\r\n", __FILE__, __LINE__, gateway_ip);
+    debug("[%s %d]: gateway6_ip = '%s'\r\n", __FILE__, __LINE__, gateway_ip);
 
     /* If the gateway isn't found, then the empty string is what we want. */
     encode_kv_string(nb, handler->name, gateway_ip);
@@ -2049,7 +2060,7 @@ static int ifname_to_index(struct netif *nb, const char *ifname)
 {
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ-1);
 
     if (ioctl(nb->inet_fd, SIOCGIFINDEX, &ifr) < 0) {
         nb->last_error = errno;
@@ -2200,7 +2211,7 @@ static void netif_handle_set(struct netif *nb,
 static void netif_request_handler(const char *req, void *cookie)
 {
     struct netif *nb = (struct netif *) cookie;
-    char ifname[IFNAMSIZ];
+    char ifname[IFNAMSIZ] = {'\0', };
 
     // Commands are of the form {Command, Arguments}:
     // { atom(), term() }

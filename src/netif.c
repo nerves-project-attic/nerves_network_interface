@@ -290,7 +290,6 @@ static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
 
     int count = 8; /* Number of fields that we always encode */
     int i;
-    int encoded_item = 0;
 
     for (i = 0; i <= IFLA_MAX; i++)
         if (tb[i])
@@ -549,7 +548,7 @@ static void netif_set_ifflags(struct netif *nb,
 
     start_response(nb);
 
-    memcpy(ifr.ifr_name, ifname, IFNAMSIZ);
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ-1);
     if (ioctl(nb->inet_fd, SIOCGIFFLAGS, &ifr) < 0) {
         debug("SIOCGIFFLAGS error: %s", strerror(errno));
         erlcmd_encode_errno_error(nb->resp, &nb->resp_index, errno);
@@ -1292,7 +1291,7 @@ static int set_mac_address_ioctl(const struct ip_setting_handler *handler, struc
 
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
-    memcpy(ifr.ifr_name, ifname, IFNAMSIZ);
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ-1);
 
     struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
     addr->sin_family = AF_UNIX;
@@ -1316,7 +1315,7 @@ static int get_mac_address_ioctl(const struct ip_setting_handler *handler, struc
 {
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
-    memcpy(ifr.ifr_name, ifname, IFNAMSIZ);
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ-1);
 
     if (ioctl(nb->inet_fd, handler->ioctl_get, &ifr) < 0) {
         debug("ioctl(0x%04x) failed for getting '%s': %s", handler->ioctl_get, handler->name, strerror(errno));
@@ -1337,7 +1336,7 @@ static int get_mac_address_ioctl(const struct ip_setting_handler *handler, struc
 
 static int prep_ipaddr_ioctl(const struct ip_setting_handler *handler, struct netif *nb, void **context)
 {
-    char ipaddr[INET_ADDRSTRLEN];
+    char ipaddr[INET_ADDRSTRLEN] = {'\0', };
     if (erlcmd_decode_string(nb->req, &nb->req_index, ipaddr, INET_ADDRSTRLEN) < 0)
         errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
 
@@ -1355,7 +1354,7 @@ static int prep_ipaddr_ioctl(const struct ip_setting_handler *handler, struct ne
 static int prep_ipaddr(const struct ip_setting_handler *handler, struct netif *nb, void **context)
 {
     #define PREFIX_LEN  (3) /* ':' + 2 bytes i.e. 1.2.3.4:32 */
-    char ipaddr[INET_ADDRSTRLEN+PREFIX_LEN];
+    char ipaddr[INET_ADDRSTRLEN+PREFIX_LEN] = {'\0', };
     if (erlcmd_decode_string(nb->req, &nb->req_index, ipaddr, INET_ADDRSTRLEN+PREFIX_LEN) < 0)
         errx(EXIT_FAILURE, "ip address parameter required for '%s'", handler->name);
 
@@ -1377,7 +1376,7 @@ static int prep_ipaddr6_ioctl(const struct ip_setting_handler *handler, struct n
 {
     struct in6_ifreq *ifr6  = malloc(sizeof(struct in6_ifreq));
     char *prefix_ptr = (void *) NULL;
-    char ipaddr[INET6_ADDRSTRLEN] = {0, };
+    char ipaddr[INET6_ADDRSTRLEN] = {'\0', };
 
     if(ifr6 == NULL) {
         debug("Unable to allocate memory for '%s'", handler->name);
@@ -1438,7 +1437,7 @@ static int set_ipaddr_ioctl(const struct ip_setting_handler *handler, struct net
 
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
-    memcpy(ifr.ifr_name, ifname, IFNAMSIZ);
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ-1);
 
     struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
 

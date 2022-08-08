@@ -1927,8 +1927,9 @@ static int add_default_gateway(struct netif *nb, const char *ifname, const char 
     ret = mnl_cb_run(nb->nlbuf, ret, seq, portid, NULL, NULL);
 
     if (ret < 0) {
-      error("[%s %d %s]: mnl_cb_run", __FILE__, __LINE__, __FUNCTION__);
-      err(EXIT_FAILURE, "mnl_cb_run");
+      error("[%s %d %s]: mnl_cb_run errno = %d '%s'", __FILE__, __LINE__, __FUNCTION__, errno, strerror(errno));
+      nb->last_error = errno;
+      return -1;
     }
   }
 

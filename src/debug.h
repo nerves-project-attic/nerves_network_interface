@@ -7,7 +7,7 @@
 
 //#define DEBUG
 //#define INFO
-//#define ERROR
+#define ERROR
 
 #ifdef DEBUG
 #define debug(format, ...)  fprintf(stderr, "DBG: "format, __VA_ARGS__); fprintf(stderr, "\r\n")

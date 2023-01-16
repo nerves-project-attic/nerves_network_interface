@@ -913,12 +913,13 @@ static int ipv6_write_integer_to_file(const struct ip_setting_handler *handler, 
     (void) handler;
 
     if ((f = fopen(fname, "w")) == NULL) {
-        debug("Unable to open file '%s' for '%s'", fname, handler->name);
+        error("Unable to open file '%s' for '%s'", fname, handler->name);
         nb->last_error = errno;
         return -1;
     }
 
     if (fprintf(f, "%d", val) < 0) {
+        error("Unable to write to the file '%s' for '%s'", fname, handler->name);
         nb->last_error = EIO;
         fclose(f);
         return -1;
@@ -967,7 +968,7 @@ static int prep_ipv6_disable(const struct ip_setting_handler *handler, struct ne
     }
 
     if ( erlcmd_decode_atom(nb->req, &nb->req_index, &ac_ctx->token[0], member_size(struct ipv6_procfs_ctx, token) ) < 0)
-        errx(EXIT_FAILURE, "Autoconf value true/false required for '%s'", handler->name);
+        errx(EXIT_FAILURE, "ipv6_disable value true/false required for '%s'", handler->name);
 
     return 0;
 }

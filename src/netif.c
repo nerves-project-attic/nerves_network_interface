@@ -323,7 +323,7 @@ static int ethtool_gset_ioctl(struct netif *nb, const char *ifname, struct netif
         return -1;
     }
 
-    ls->speed  = (ecmd.speed_hi << 16) | ecmd.speed;;
+    ls->speed  = (ecmd.speed_hi << 16) | ecmd.speed;
     ls->duplex = ecmd.duplex;
 
     return 0;

@@ -7,6 +7,7 @@
 
 //#define DEBUG
 //#define INFO
+#define WARN
 #define ERROR
 
 #ifdef DEBUG
@@ -23,6 +24,14 @@
 #else
 #define info(format, ...)
 #define infof(string)
+#endif
+
+#ifdef WARN
+#define warn(format, ...)  fprintf(stderr, "WARN: "format, __VA_ARGS__); fprintf(stderr, "\r\n")
+#define warnf(string) fprintf(stderr, string); fprintf(stderr, "\r\n")
+#else
+#define warn(format, ...)
+#define warnf(string)
 #endif
 
 #ifdef ERROR

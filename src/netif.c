@@ -38,6 +38,8 @@
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <linux/ipv6.h>
+#include <linux/sockios.h>
+#include <linux/ethtool.h>
 #include <netinet/in.h>
 
 // In Ubuntu 16.04, it seems that the new compat logic handling is preventing
@@ -87,6 +89,11 @@ struct netif {
 
     // Holder of the most recently encounted errno.
     int last_error;
+};
+
+struct netif_link_settings {
+  __u32 speed;
+  __u8  duplex;
 };
 
 static void netif_init(struct netif *nb)
@@ -257,6 +264,30 @@ static void encode_kv_stats(struct netif *nb, const char *key, struct nlattr *at
     encode_kv_ulong(nb, "collisions", stats->collisions);
 }
 
+static void encode_kv_link_settings(struct netif *nb, const char *key, const struct netif_link_settings *ls)
+{
+  ei_encode_atom(nb->resp, &nb->resp_index, key);
+  if (ls != NULL) {
+    ei_encode_map_header(nb->resp, &nb->resp_index, 2);
+
+    encode_kv_ulong(nb, "speed", ls->speed);
+
+    switch (ls->duplex) {
+      case DUPLEX_HALF:
+        encode_kv_atom(nb, "duplex", "half");
+        break;
+      case DUPLEX_FULL:
+        encode_kv_atom(nb, "duplex", "full");
+        break;
+      default:
+        encode_kv_atom(nb, "duplex", "unknown");
+        break;
+    };
+  } else {
+    ei_encode_map_header(nb->resp, &nb->resp_index, 0);
+  }
+}
+
 static void encode_kv_operstate(struct netif *nb, int operstate)
 {
     ei_encode_atom(nb->resp, &nb->resp_index, "operstate");
@@ -276,60 +307,100 @@ static void encode_kv_operstate(struct netif *nb, int operstate)
     ei_encode_atom(nb->resp, &nb->resp_index, operstate_atom);
 }
 
+static int ethtool_gset_ioctl(struct netif *nb, const char *ifname, struct netif_link_settings *ls)
+{
+    struct ethtool_cmd ecmd = {0, };
+    struct ifreq ifr = {0, };
+
+    ecmd.cmd = ETHTOOL_GSET;
+
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ-1);
+    ifr.ifr_data = (void *) &ecmd;
+
+    if (ioctl(nb->inet_fd, SIOCETHTOOL, &ifr) < 0) {
+        error("ioctl(0x%04x) failed for getting '%s': %s for %s", SIOCETHTOOL, "ETHTOOL_GSET", strerror(errno), ifname);
+        nb->last_error = errno;
+        return -1;
+    }
+
+    ls->speed  = (ecmd.speed_hi << 16) | ecmd.speed;
+    ls->duplex = ecmd.duplex;
+
+    return 0;
+}
+
 static int netif_build_ifinfo(const struct nlmsghdr *nlh, void *data)
 {
-    struct netif *nb = (struct netif *) data;
-    struct nlattr *tb[IFLA_MAX + 1];
-    memset(tb, 0, sizeof(tb));
-    struct ifinfomsg *ifm = mnl_nlmsg_get_payload(nlh);
+  struct netif *nb = (struct netif *) data;
+  struct nlattr *tb[IFLA_MAX + 1];
+  memset(tb, 0, sizeof(tb));
+  struct ifinfomsg *ifm = mnl_nlmsg_get_payload(nlh);
 
-    if (mnl_attr_parse(nlh, sizeof(*ifm), collect_if_attrs, tb) != MNL_CB_OK) {
-        debugf("Error from mnl_attr_parse");
-        return MNL_CB_ERROR;
-    }
+  if (mnl_attr_parse(nlh, sizeof(*ifm), collect_if_attrs, tb) != MNL_CB_OK) {
+    debugf("Error from mnl_attr_parse");
+    return MNL_CB_ERROR;
+  }
 
-    int count = 8; /* Number of fields that we always encode */
-    int i;
+  int count = 9; /* Number of fields that we always encode */
+  int i;
 
-    for (i = 0; i <= IFLA_MAX; i++)
-        if (tb[i])
-            count++;
+  for (i = 0; i <= IFLA_MAX; i++)
+    if (tb[i])
+      count++;
 
-    ei_encode_map_header(nb->resp, &nb->resp_index, count);
+  ei_encode_map_header(nb->resp, &nb->resp_index, count);
 
-    encode_kv_long(nb, "index", ifm->ifi_index);
-    encode_kv_atom(nb, "type", ifm->ifi_type == ARPHRD_ETHER ? "ethernet" : "other");
+  encode_kv_long(nb, "index", ifm->ifi_index);
+  encode_kv_atom(nb, "type", ifm->ifi_type == ARPHRD_ETHER ? "ethernet" : "other");
 
-    encode_kv_bool(nb, "is_up", ifm->ifi_flags & IFF_UP);
-    encode_kv_bool(nb, "is_broadcast", ifm->ifi_flags & IFF_BROADCAST);
-    encode_kv_bool(nb, "is_running", ifm->ifi_flags & IFF_RUNNING);
-    encode_kv_bool(nb, "is_lower_up", ifm->ifi_flags & WORKAROUND_IFF_LOWER_UP);
-    encode_kv_bool(nb, "is_multicast", ifm->ifi_flags & IFF_MULTICAST);
-    encode_kv_bool(nb, "is_all-multicast", ifm->ifi_flags & IFF_ALLMULTI);
+  encode_kv_bool(nb, "is_up", ifm->ifi_flags & IFF_UP);
+  encode_kv_bool(nb, "is_broadcast", ifm->ifi_flags & IFF_BROADCAST);
+  encode_kv_bool(nb, "is_running", ifm->ifi_flags & IFF_RUNNING);
+  encode_kv_bool(nb, "is_lower_up", ifm->ifi_flags & WORKAROUND_IFF_LOWER_UP);
+  encode_kv_bool(nb, "is_multicast", ifm->ifi_flags & IFF_MULTICAST);
+  encode_kv_bool(nb, "is_all-multicast", ifm->ifi_flags & IFF_ALLMULTI);
 
-    if (tb[IFLA_MTU]) {
-        encode_kv_ulong(nb, "mtu", mnl_attr_get_u32(tb[IFLA_MTU]));
-    }
-    if (tb[IFLA_IFNAME]) {
-        encode_kv_string(nb, "ifname", mnl_attr_get_str(tb[IFLA_IFNAME]));
-    }
-    if (tb[IFLA_ADDRESS]) {
-        encode_kv_macaddr(nb, "mac_address", mnl_attr_get_payload(tb[IFLA_ADDRESS]));
-    }
-    if (tb[IFLA_BROADCAST]) {
-        encode_kv_macaddr(nb, "mac_broadcast", mnl_attr_get_payload(tb[IFLA_BROADCAST]));
-    }
-    if (tb[IFLA_LINK]) {
-        encode_kv_ulong(nb, "link", mnl_attr_get_u32(tb[IFLA_LINK]));
-    }
-    if (tb[IFLA_OPERSTATE]) {
-        encode_kv_operstate(nb, mnl_attr_get_u32(tb[IFLA_OPERSTATE]));
-    }
-    if (tb[IFLA_STATS]) {
-        encode_kv_stats(nb, "stats", tb[IFLA_STATS]);
-    }
+  if (tb[IFLA_MTU]) {
+    encode_kv_ulong(nb, "mtu", mnl_attr_get_u32(tb[IFLA_MTU]));
+  }
+  if (tb[IFLA_IFNAME]) {
+    encode_kv_string(nb, "ifname", mnl_attr_get_str(tb[IFLA_IFNAME]));
+  }
+  if (tb[IFLA_ADDRESS]) {
+    encode_kv_macaddr(nb, "mac_address", mnl_attr_get_payload(tb[IFLA_ADDRESS]));
+  }
+  if (tb[IFLA_BROADCAST]) {
+    encode_kv_macaddr(nb, "mac_broadcast", mnl_attr_get_payload(tb[IFLA_BROADCAST]));
+  }
+  if (tb[IFLA_LINK]) {
+    encode_kv_ulong(nb, "link", mnl_attr_get_u32(tb[IFLA_LINK]));
+  }
+  if (tb[IFLA_OPERSTATE]) {
+    encode_kv_operstate(nb, mnl_attr_get_u32(tb[IFLA_OPERSTATE]));
+  }
+  if (tb[IFLA_STATS]) {
+    encode_kv_stats(nb, "stats", tb[IFLA_STATS]);
+  }
 
-    return MNL_CB_OK;
+  if (tb[IFLA_IFNAME]) {
+    struct netif_link_settings ls = {0, };
+
+    int ret = 0;
+
+    if((ret = ethtool_gset_ioctl(nb, mnl_attr_get_str(tb[IFLA_IFNAME]), &ls)) == 0) {
+      encode_kv_link_settings(nb, "link_settings", &ls);
+    } else {
+      error("[%s %d %s]: gset_ioctl returned %d!\r\n", __FILE__, __LINE__, __func__, ret);
+
+      encode_kv_link_settings(nb, "link_settings", NULL);
+    }
+  } else {
+    warn("[%s %d %s]:  tb[IFLA_IFNAME] not present not encoding link settings!", __FILE__, __LINE__, __func__);
+
+    encode_kv_link_settings(nb, "link_settings", NULL);
+  }
+
+  return MNL_CB_OK;
 }
 
 static void nl_uevent_process(struct netif *nb)
@@ -403,7 +474,7 @@ static void nl_uevent_process(struct netif *nb)
 
 static void handle_notification(struct netif *nb, int bytecount)
 {
-    debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __FUNCTION__, bytecount);
+    debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __func__, bytecount);
 
     // Create the notification
     start_notification(nb);
@@ -421,7 +492,7 @@ static void handle_notification(struct netif *nb, int bytecount)
 
 static void handle_async_response(struct netif *nb, int bytecount)
 {
-    debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __FUNCTION__, bytecount);
+    debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __func__, bytecount);
 
     nb->response_callback(nb, bytecount);
     nb->response_callback = NULL;
@@ -430,7 +501,7 @@ static void handle_async_response(struct netif *nb, int bytecount)
 
 static void handle_async_response_error(struct netif *nb, int err)
 {
-    debug("[%s %d %s]: err = %d\r\n", __FILE__, __LINE__, __FUNCTION__, err);
+    debug("[%s %d %s]: err = %d\r\n", __FILE__, __LINE__, __func__, err);
 
     nb->response_error_callback(nb, err);
     nb->response_callback = NULL;
@@ -441,7 +512,7 @@ static void nl_route_process(struct netif *nb)
 {
     int bytecount = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
 
-    debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __FUNCTION__, bytecount);
+    debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __func__, bytecount);
 
     if (bytecount <= 0)
         err(EXIT_FAILURE, "mnl_socket_recvfrom");
@@ -483,7 +554,8 @@ static void netif_handle_interfaces(struct netif *nb)
 
 static void netif_handle_status_callback(struct netif *nb, int bytecount)
 {
-    debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __FUNCTION__, bytecount);
+    debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __func__, bytecount);
+    fprintf(stderr, "[%s %d %s]\r\n", __FILE__, __LINE__, __func__);
 
     start_response(nb);
 
@@ -502,7 +574,7 @@ static void netif_handle_status_callback(struct netif *nb, int bytecount)
 
 static void netif_handle_status_error_callback(struct netif *nb, int err)
 {
-    debug("[%s %d %s]: err = %d\r\n", __FILE__, __LINE__, __FUNCTION__, err);
+    debug("[%s %d %s]: err = %d\r\n", __FILE__, __LINE__, __func__, err);
 
     start_response(nb);
     erlcmd_encode_errno_error(nb->resp, &nb->resp_index, err);
@@ -1442,7 +1514,7 @@ static int set_ipaddr_ioctl(const struct ip_setting_handler *handler, struct net
 
     struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
 
-    info("[%s %d %s]: address = '%s'\r\n", __FILE__, __LINE__, __FUNCTION__, ipaddr);
+    info("[%s %d %s]: address = '%s'\r\n", __FILE__, __LINE__, __func__, ipaddr);
 
     addr->sin_family = AF_INET;
 
@@ -1528,12 +1600,12 @@ static int remove_ipaddr(const struct ip_setting_handler *handler, struct netif 
   {
     unsigned int portid = mnl_socket_get_portid(nb->nl);
 
-    debug("[%s %d %s]: mnl_cb_run(ret = %d; seq = %d; portid = %d\r\n", __FILE__, __LINE__, __FUNCTION__, ret, seq, portid);
+    debug("[%s %d %s]: mnl_cb_run(ret = %d; seq = %d; portid = %d\r\n", __FILE__, __LINE__, __func__, ret, seq, portid);
 
     ret = mnl_cb_run(nb->nlbuf, ret, seq, portid, NULL, NULL);
 
     if (ret < 0) {
-      debug("[%s %d %s]: mnl_cb_run ret = %d", __FILE__, __LINE__, __FUNCTION__, ret);
+      debug("[%s %d %s]: mnl_cb_run ret = %d", __FILE__, __LINE__, __func__, ret);
       return 0;
     }
   }
@@ -1912,13 +1984,13 @@ static int add_default_gateway(struct netif *nb, const char *ifname, const char 
 
 
   if (mnl_socket_sendto(nb->nl, nlh, nlh->nlmsg_len) < 0) {
-    error("[%s %d %s]: mnl_socket_sendto", __FILE__, __LINE__, __FUNCTION__);
+    error("[%s %d %s]: mnl_socket_sendto", __FILE__, __LINE__, __func__);
     err(EXIT_FAILURE, "mnl_socket_sendto");
   }
 
   ret = mnl_socket_recvfrom(nb->nl, nb->nlbuf, sizeof(nb->nlbuf));
   if (ret < 0) {
-    error("[%s %d %s]: mnl_socket_recvfrom", __FILE__, __LINE__, __FUNCTION__);
+    error("[%s %d %s]: mnl_socket_recvfrom", __FILE__, __LINE__, __func__);
 
     err(EXIT_FAILURE, "mnl_socket_recvfrom");
   }
@@ -1928,7 +2000,7 @@ static int add_default_gateway(struct netif *nb, const char *ifname, const char 
     ret = mnl_cb_run(nb->nlbuf, ret, seq, portid, NULL, NULL);
 
     if (ret < 0) {
-      error("[%s %d %s]: mnl_cb_run errno = %d '%s'", __FILE__, __LINE__, __FUNCTION__, errno, strerror(errno));
+      error("[%s %d %s]: mnl_cb_run errno = %d '%s'", __FILE__, __LINE__, __func__, errno, strerror(errno));
       nb->last_error = errno;
       return -1;
     }

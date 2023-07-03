@@ -555,7 +555,6 @@ static void netif_handle_interfaces(struct netif *nb)
 static void netif_handle_status_callback(struct netif *nb, int bytecount)
 {
     debug("[%s %d %s]: bytecount = %d\r\n", __FILE__, __LINE__, __func__, bytecount);
-    fprintf(stderr, "[%s %d %s]\r\n", __FILE__, __LINE__, __func__);
 
     start_response(nb);
 

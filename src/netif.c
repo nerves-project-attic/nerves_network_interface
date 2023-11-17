@@ -2101,7 +2101,7 @@ static int add_default_gateway6(struct netif *nb, const char *ifname, const char
 
     int rc = ioctl(nb->inet6_fd, SIOCADDRT, &route);
     if (rc < 0 && errno != EEXIST) {
-        error("IOCTL failed for the default gateway v6: %s", gateway_ip);
+        error("IOCTL failed for the default gateway v6: %s; errno = %d : '%s'", gateway_ip, errno, strerror(errno));
         nb->last_error = errno;
         return -1;
     }
